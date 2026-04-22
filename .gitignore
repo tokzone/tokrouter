@@ -1,0 +1,16 @@
+# Local development
+go.work
+go.work.sum
+
+# Build output
+tokrouter
+*.exe
+
+# Data
+data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

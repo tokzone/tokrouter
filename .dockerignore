@@ -1,0 +1,38 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+tokrouter
+fluxcore-build
+*.exe
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Claude
+.claude
+
+# Documentation (not needed in image)
+*.md
+!README.md
+LICENSE
+
+# Temporary
+*.log
+data/*.db
+
+# Test files
+*_test.go
+testdata/
+
+# CI
+.github/
+
+# Docker files (not needed in image)
+Dockerfile
+docker-compose*.yaml
+.dockerignore

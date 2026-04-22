@@ -1,0 +1,66 @@
+# tokrouter configuration example
+
+server:
+  host: "127.0.0.1"  # localhost only for personal use
+  port: 8765         # avoid Clash default port 7890
+
+keys:
+  - name: openai-main
+    base_url: "https://api.openai.com/v1"
+    format: openai
+    secret: "${OPENAI_API_KEY}"
+    enabled: true
+    models:
+      - name: gpt-4
+        pricing:
+          input: 0.03
+          output: 0.06
+      - name: gpt-3.5-turbo
+        pricing:
+          input: 0.0015
+          output: 0.002
+
+  - name: anthropic-main
+    base_url: "https://api.anthropic.com/v1"
+    format: anthropic
+    secret: "${ANTHROPIC_API_KEY}"
+    enabled: true
+    models:
+      - name: claude-3-opus
+        pricing:
+          input: 0.015
+          output: 0.075
+      - name: claude-3-sonnet
+        pricing:
+          input: 0.003
+          output: 0.015
+
+  - name: zhipu-main
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    format: openai
+    secret: "${ZHIPU_API_KEY}"
+    enabled: true
+    models:
+      - name: glm-4
+        pricing:
+          input: 0.1
+          output: 0.1
+
+router:
+  retry:
+    max_retries: 2
+    timeout: "30s"
+    backoff: "exponential"
+
+stats:
+  enabled: true
+  db_path: "./data/usage.db"
+
+log:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+trace:
+  enabled: true
+  header: "x-request-id"

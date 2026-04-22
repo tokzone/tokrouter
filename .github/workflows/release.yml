@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout tokrouter
+        uses: actions/checkout@v4
+        with:
+          path: tokrouter
+
+      - name: Checkout fluxcore
+        uses: actions/checkout@v4
+        with:
+          repository: tokzone/fluxcore
+          path: fluxcore
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          cd tokrouter
+          go mod edit -replace=github.com/tokzone/fluxcore=$(pwd)/../fluxcore
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          go build -ldflags="-s -w -X tokflux/tokrouter/cli.version=${{ github.ref_name }}" -o tokrouter-${{ matrix.goos }}-${{ matrix.goarch }}${ext} ./cmd/tokrouter
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokrouter-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: tokrouter/tokrouter-${{ matrix.goos }}-${{ matrix.goarch }}*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

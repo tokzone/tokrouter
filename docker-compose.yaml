@@ -1,0 +1,32 @@
+# tokrouter Docker Compose 配置
+# 使用预构建镜像 - 最简单的部署方式
+#
+# 快速部署步骤:
+# 1. 复制 config.example.yaml 为 config.yaml
+# 2. 修改 config.yaml 中的 API Keys
+# 3. 运行: docker compose up -d
+
+services:
+  tokrouter:
+    image: ghcr.io/tokflux/tokrouter:latest
+    container_name: tokrouter
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      - TZ=Asia/Shanghai
+      # API Keys 通过环境变量传入
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  data:

@@ -1,0 +1,37 @@
+# tokrouter 源码构建配置
+# 从源码构建 Docker 镜像
+#
+# 使用方法:
+# 1. 克隆代码: git clone https://github.com/tokflux/tokrouter.git
+# 2. 进入目录: cd tokrouter
+# 3. 配置: cp config.example.yaml config.yaml && vim config.yaml
+# 4. 构建: docker compose -f docker-compose.build.yaml up -d --build
+
+services:
+  tokrouter:
+    build:
+      context: .
+      dockerfile: Dockerfile.hub
+      args:
+        FLUXCORE_VERSION: main
+    image: tokrouter:local
+    container_name: tokrouter
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      - TZ=Asia/Shanghai
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  data:

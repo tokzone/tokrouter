@@ -1,0 +1,47 @@
+# Dockerfile.hub - 用于 CI/CD 构建预发布镜像
+# 自动从 GitHub 克隆 fluxcore 依赖
+# 构建命令: docker build -f Dockerfile.hub -t tokrouter .
+
+# 阶段1: 构建
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /build
+
+# 安装构建依赖（CGO/SQLite 需要 gcc）
+RUN apk add --no-cache git gcc musl-dev
+
+ENV GOPROXY=https://goproxy.cn,direct
+# 修复 SQLite CGO 在 Alpine/musl 上的编译问题
+ENV CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
+
+# 从 GitHub 克隆 fluxcore 依赖
+ARG FLUXCORE_VERSION=main
+RUN git clone --depth 1 --branch ${FLUXCORE_VERSION} https://github.com/tokzone/fluxcore.git /fluxcore
+
+# 复制源代码
+COPY . .
+
+# 修改 go.mod 中的 replace 指令指向克隆的 fluxcore
+RUN go mod edit -replace=github.com/tokzone/fluxcore=/fluxcore
+
+# 下载依赖并构建
+RUN go mod download
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o tokrouter ./cmd/tokrouter
+
+# 阶段2: 运行时
+FROM alpine:3.19
+
+WORKDIR /app
+
+RUN apk --no-cache add ca-certificates wget tzdata
+
+COPY --from=builder /build/tokrouter .
+
+RUN mkdir -p /app/data
+
+EXPOSE 8765
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD wget -q -O- http://localhost:8765/health > /dev/null 2>&1 || exit 1
+
+CMD ["./tokrouter", "serve"]

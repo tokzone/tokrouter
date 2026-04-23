@@ -3,8 +3,8 @@ package cli
 import (
 	"context"
 
-	"tokflux/tokrouter/config"
-	"tokflux/tokrouter/server"
+	"github.com/tokzone/tokrouter/config"
+	"github.com/tokzone/tokrouter/server"
 
 	"github.com/urfave/cli/v3"
 )
@@ -46,7 +46,7 @@ func runServe(c *cli.Command) error {
 	srv := server.NewServer(routerSvc, config.TraceConfig{
 		Enabled: cfg.Trace.Enabled,
 		Header:  cfg.Trace.Header,
-	})
+	}, configPath)
 	srv.Run()
 	return nil
 }

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"tokflux/tokrouter/config"
+	"github.com/tokzone/tokrouter/config"
 
 	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"

@@ -205,7 +205,108 @@ func TestToEndpoints(t *testing.T) {
 	if endpoints[0].Model != "gpt-4" {
 		t.Errorf("Model = %s, want gpt-4", endpoints[0].Model)
 	}
-	if endpoints[0].InputPrice != 0.03 {
-		t.Errorf("InputPrice = %f, want 0.03", endpoints[0].InputPrice)
+	// Priority is calculated from pricing: (0.03 + 0.06) * 1_000_000 = 90000
+	if endpoints[0].Priority != 90000 {
+		t.Errorf("Priority = %d, want 90000", endpoints[0].Priority)
+	}
+}
+
+func TestResolvePaths(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	content := `
+server:
+  port: 8765
+  tls_cert: "./cert.pem"
+  tls_key: "./key.pem"
+
+keys:
+  - name: test-key
+    base_url: "https://api.example.com/v1"
+    format: openai
+    secret: "test-secret"
+    enabled: true
+    models:
+      - name: "gpt-4"
+        pricing:
+          input: 0.03
+          output: 0.06
+
+stats:
+  enabled: true
+  db_path: "./data/usage.db"
+
+log:
+  level: info
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Check that relative paths are resolved to config file directory
+	expectedDBPath := filepath.Join(tmpDir, "data", "usage.db")
+	if cfg.Stats.DBPath != expectedDBPath {
+		t.Errorf("DBPath = %s, want %s", cfg.Stats.DBPath, expectedDBPath)
+	}
+
+	expectedTLSCert := filepath.Join(tmpDir, "cert.pem")
+	if cfg.Server.TLSCert != expectedTLSCert {
+		t.Errorf("TLSCert = %s, want %s", cfg.Server.TLSCert, expectedTLSCert)
+	}
+
+	expectedTLSKey := filepath.Join(tmpDir, "key.pem")
+	if cfg.Server.TLSKey != expectedTLSKey {
+		t.Errorf("TLSKey = %s, want %s", cfg.Server.TLSKey, expectedTLSKey)
+	}
+}
+
+func TestResolvePathsAbsolute(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	// Use absolute paths
+	absPath := "/var/data/usage.db"
+
+	content := `
+server:
+  port: 8765
+
+keys:
+  - name: test-key
+    base_url: "https://api.example.com/v1"
+    format: openai
+    secret: "test-secret"
+    enabled: true
+    models:
+      - name: "gpt-4"
+        pricing:
+          input: 0.03
+          output: 0.06
+
+stats:
+  enabled: true
+  db_path: "` + absPath + `"
+
+log:
+  level: info
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Absolute path should remain unchanged
+	if cfg.Stats.DBPath != absPath {
+		t.Errorf("DBPath = %s, want %s", cfg.Stats.DBPath, absPath)
 	}
 }

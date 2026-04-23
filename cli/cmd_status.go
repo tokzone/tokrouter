@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"time"
 
-	"tokflux/tokrouter/config"
-	"tokflux/tokrouter/router"
+	"github.com/tokzone/tokrouter/config"
+	"github.com/tokzone/tokrouter/router"
 
 	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"

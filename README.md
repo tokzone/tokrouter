@@ -294,6 +294,57 @@ tokrouter auto-switches to next healthy model.
 
 ---
 
+## Model-Level Routing
+
+Requests are routed to endpoints matching the requested model:
+
+```yaml
+keys:
+  - name: openai-main
+    models:
+      - name: gpt-4
+        pricing: {input: 0.03, output: 0.06}
+      - name: gpt-3.5-turbo
+        pricing: {input: 0.001, output: 0.002}
+```
+
+Request for `gpt-4` → only routes to gpt-4 endpoints (not gpt-3.5-turbo).
+
+### Model Alias
+
+Map request model names to actual model names:
+
+```yaml
+keys:
+  - name: openai-main
+    models:
+      - name: gpt-4-turbo
+        alias: gpt-4-1106-preview  # Request "gpt-4-turbo" → uses "gpt-4-1106-preview"
+        pricing: {input: 0.01, output: 0.03}
+```
+
+---
+
+## Hot Reload
+
+Reload config without restart:
+
+```bash
+kill -SIGHUP $(pidof tokrouter)
+```
+
+---
+
+## Latency-Aware Routing
+
+Endpoints are selected by:
+1. **Price** (lower is better)
+2. **EWMA latency** (recent latency weighted higher)
+
+This avoids slow endpoints automatically.
+
+---
+
 ## Cost Tracking
 
 ```bash
@@ -785,6 +836,57 @@ export OPENAI_API_BASE=http://127.0.0.1:8765/v1
 
 tokrouter 自动切换到下一个健康模型。
 ```
+
+---
+
+## 模型级路由
+
+请求只路由到匹配模型的端点：
+
+```yaml
+keys:
+  - name: openai-main
+    models:
+      - name: gpt-4
+        pricing: {input: 0.03, output: 0.06}
+      - name: gpt-3.5-turbo
+        pricing: {input: 0.001, output: 0.002}
+```
+
+请求 `gpt-4` → 只路由到 gpt-4 端点（不会路由到 gpt-3.5-turbo）。
+
+### 模型别名
+
+将请求模型名映射到实际模型名：
+
+```yaml
+keys:
+  - name: openai-main
+    models:
+      - name: gpt-4-turbo
+        alias: gpt-4-1106-preview  # 请求 "gpt-4-turbo" → 实际用 "gpt-4-1106-preview"
+        pricing: {input: 0.01, output: 0.03}
+```
+
+---
+
+## 热重载
+
+无需重启即可重载配置：
+
+```bash
+kill -SIGHUP $(pidof tokrouter)
+```
+
+---
+
+## 延迟感知路由
+
+端点选择策略：
+1. **价格**（低优先）
+2. **EWMA 延迟**（近期延迟权重更高）
+
+自动避开慢端点。
 
 ---
 

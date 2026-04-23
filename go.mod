@@ -1,4 +1,4 @@
-module tokflux/tokrouter
+module github.com/tokzone/tokrouter
 
 go 1.24.0
 

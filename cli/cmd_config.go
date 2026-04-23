@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"tokflux/tokrouter/config"
+	"github.com/tokzone/tokrouter/config"
 
 	"github.com/urfave/cli/v3"
 )

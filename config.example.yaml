@@ -15,6 +15,11 @@ keys:
         pricing:
           input: 0.03
           output: 0.06
+      - name: gpt-4-turbo
+        alias: gpt-4-1106-preview  # Optional: map request model to actual model
+        pricing:
+          input: 0.01
+          output: 0.03
       - name: gpt-3.5-turbo
         pricing:
           input: 0.0015

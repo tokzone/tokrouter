@@ -9,22 +9,23 @@ import (
 	"os/signal"
 	"syscall"
 
-	"tokflux/tokrouter/config"
-	"tokflux/tokrouter/router"
+	"github.com/tokzone/tokrouter/config"
+	"github.com/tokzone/tokrouter/router"
 
 	"github.com/tokzone/fluxcore/routing"
 )
 
 // Server represents HTTP server
 type Server struct {
-	cfg      config.ServerConfig
-	traceCfg config.TraceConfig
-	router   *router.Service
-	server   *http.Server
+	cfg        config.ServerConfig
+	traceCfg   config.TraceConfig
+	router     *router.Service
+	server     *http.Server
+	configPath string
 }
 
 // NewServer creates a new HTTP server
-func NewServer(routerSvc *router.Service, traceCfg config.TraceConfig) *Server {
+func NewServer(routerSvc *router.Service, traceCfg config.TraceConfig, configPath string) *Server {
 	cfg := routerSvc.ServerConfig()
 	mux := http.NewServeMux()
 
@@ -57,10 +58,11 @@ func NewServer(routerSvc *router.Service, traceCfg config.TraceConfig) *Server {
 	}
 
 	return &Server{
-		cfg:      cfg,
-		traceCfg: traceCfg,
-		router:   routerSvc,
-		server:   httpServer,
+		cfg:        cfg,
+		traceCfg:   traceCfg,
+		router:     routerSvc,
+		server:     httpServer,
+		configPath: configPath,
 	}
 }
 
@@ -69,11 +71,27 @@ func (s *Server) Run() {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		fmt.Println("\nShutting down...")
-		s.server.Shutdown(ctx)
-		cancel()
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+		for {
+			sig := <-sigCh
+			switch sig {
+			case syscall.SIGHUP:
+				// Hot reload
+				fmt.Println("Received SIGHUP, reloading config...")
+				cfg, err := config.Load(s.configPath)
+				if err != nil {
+					fmt.Printf("Error reloading config: %v\n", err)
+					continue
+				}
+				s.router.Reload(cfg)
+				fmt.Println("Config reloaded successfully")
+			case syscall.SIGINT, syscall.SIGTERM:
+				fmt.Println("\nShutting down...")
+				s.server.Shutdown(ctx)
+				cancel()
+				return
+			}
+		}
 	}()
 
 	// Set log level from config

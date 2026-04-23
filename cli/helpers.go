@@ -1,9 +1,9 @@
 package cli
 
 import (
-	"tokflux/tokrouter/config"
-	"tokflux/tokrouter/router"
-	"tokflux/tokrouter/usage"
+	"github.com/tokzone/tokrouter/config"
+	"github.com/tokzone/tokrouter/router"
+	"github.com/tokzone/tokrouter/usage"
 )
 
 func createRouter(cfg *config.Config) (*router.Service, error) {

@@ -9,9 +9,9 @@ import (
 	"os"
 	"time"
 
-	"tokflux/tokrouter/config"
-	"tokflux/tokrouter/router"
-	"tokflux/tokrouter/usage"
+	"github.com/tokzone/tokrouter/config"
+	"github.com/tokzone/tokrouter/router"
+	"github.com/tokzone/tokrouter/usage"
 
 	"github.com/tokzone/fluxcore/routing"
 )

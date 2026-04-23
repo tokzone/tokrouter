@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"tokflux/tokrouter/config"
+	"github.com/tokzone/tokrouter/config"
 )
 
 func TestHandleHealth(t *testing.T) {

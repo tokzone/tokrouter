@@ -52,7 +52,7 @@ var errorDefinitions = map[string]struct {
 	},
 	ErrCodeInternalError: {
 		message:    "Internal server error",
-		suggestion: "Check server logs for details. If persistent, report issue at github.com/tokflux/tokrouter",
+		suggestion: "Check server logs for details. If persistent, report issue at github.com/github.com/tokzone/tokrouter",
 	},
 }
 

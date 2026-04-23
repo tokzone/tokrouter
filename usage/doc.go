@@ -9,8 +9,8 @@
 //	storage, _ := usage.NewStorage("stats.db")
 //	svc := usage.NewService(storage)
 //
-//	// Record usage
-//	svc.RecordWithEndpoint(usage, endpoint, false)
+//	// Record usage (prices are per-million-token)
+//	svc.RecordWithEndpoint(usage, endpoint, false, 0.01, 0.03)
 //
 //	// Query stats
 //	stats, _ := svc.Query(usage.QueryFilter{

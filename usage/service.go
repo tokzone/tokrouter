@@ -20,7 +20,8 @@ func NewService(storage Storage) *Service {
 }
 
 // RecordWithEndpoint records usage with endpoint info
-func (s *Service) RecordWithEndpoint(usage *message.Usage, ep *routing.Endpoint, isStream bool) {
+// inputPrice and outputPrice are per-million-token prices for cost calculation.
+func (s *Service) RecordWithEndpoint(usage *message.Usage, ep *routing.Endpoint, isStream bool, inputPrice, outputPrice float64) {
 	if s.storage == nil || usage == nil || ep == nil {
 		return
 	}
@@ -36,9 +37,9 @@ func (s *Service) RecordWithEndpoint(usage *message.Usage, ep *routing.Endpoint,
 		LatencyMs:    uint16(usage.LatencyMs),
 	}
 
-	// Calculate cost from endpoint pricing (store as cents * 10000 for precision)
-	// Price is per million tokens, so divide by 1,000,000
-	cost := float64(usage.InputTokens)*ep.InputPrice + float64(usage.OutputTokens)*ep.OutputPrice
+	// Calculate cost from pricing (store as cents * 10000 for precision)
+	// Price is per million tokens
+	cost := float64(usage.InputTokens)*inputPrice + float64(usage.OutputTokens)*outputPrice
 	record.Cost = int64(cost * 10000)
 
 	s.storage.Record(record)

@@ -9,8 +9,8 @@ import (
 	"sort"
 	"time"
 
-	"tokflux/tokrouter/config"
-	"tokflux/tokrouter/usage"
+	"github.com/tokzone/tokrouter/config"
+	"github.com/tokzone/tokrouter/usage"
 
 	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"

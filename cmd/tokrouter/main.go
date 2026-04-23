@@ -1,6 +1,6 @@
 package main
 
-import "tokflux/tokrouter/cli"
+import "github.com/tokzone/tokrouter/cli"
 
 func main() {
 	cli.Execute()

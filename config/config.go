@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -47,6 +48,7 @@ func (k *KeyConfig) Protocol() routing.Protocol {
 // ModelConfig holds model configuration
 type ModelConfig struct {
 	Name    string        `mapstructure:"name"`
+	Alias   string        `mapstructure:"alias"`   // Optional: map request model name to actual model
 	Pricing PricingConfig `mapstructure:"pricing"`
 }
 
@@ -54,6 +56,14 @@ type ModelConfig struct {
 type PricingConfig struct {
 	Input  float64 `mapstructure:"input"`
 	Output float64 `mapstructure:"output"`
+}
+
+// validLogLevels is the set of valid log levels
+var validLogLevels = map[string]bool{
+	"debug": true,
+	"info":  true,
+	"warn":  true,
+	"error": true,
 }
 
 // RouterConfig holds router configuration
@@ -89,6 +99,13 @@ type TraceConfig struct {
 
 // Load loads configuration from file
 func Load(configPath string) (*Config, error) {
+	// Get absolute path and directory of config file
+	absConfigPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve config path: %w", err)
+	}
+	configDir := filepath.Dir(absConfigPath)
+
 	v := viper.New()
 
 	v.SetConfigFile(configPath)
@@ -113,6 +130,9 @@ func Load(configPath string) (*Config, error) {
 	for i := range cfg.Keys {
 		cfg.Keys[i].Secret = expandEnv(cfg.Keys[i].Secret)
 	}
+
+	// Resolve relative paths based on config file directory
+	cfg.resolvePaths(configDir)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -139,6 +159,19 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("trace.enabled", true)
 	v.SetDefault("trace.header", "x-request-id")
+}
+
+// resolvePaths resolves relative paths to absolute paths based on config file directory
+func (c *Config) resolvePaths(configDir string) {
+	if !filepath.IsAbs(c.Stats.DBPath) {
+		c.Stats.DBPath = filepath.Join(configDir, c.Stats.DBPath)
+	}
+	if c.Server.TLSCert != "" && !filepath.IsAbs(c.Server.TLSCert) {
+		c.Server.TLSCert = filepath.Join(configDir, c.Server.TLSCert)
+	}
+	if c.Server.TLSKey != "" && !filepath.IsAbs(c.Server.TLSKey) {
+		c.Server.TLSKey = filepath.Join(configDir, c.Server.TLSKey)
+	}
 }
 
 // Validate validates the configuration
@@ -183,8 +216,7 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate log config
-	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
-	if !validLevels[c.Log.Level] {
+	if !validLogLevels[c.Log.Level] {
 		return fmt.Errorf("config invalid: invalid log level %s", c.Log.Level)
 	}
 
@@ -224,9 +256,11 @@ func isValidProtocol(s string) bool {
 }
 
 // ToEndpoints converts KeyConfig to routing.Endpoint
+// Priority is calculated as (inputPrice + outputPrice) * 1_000_000 for price-first routing.
 func (c *Config) ToEndpoints() []*routing.Endpoint {
 	endpoints := make([]*routing.Endpoint, 0, len(c.Keys))
 
+	const priceScale = 1_000_000
 	id := uint(1)
 	for _, kc := range c.Keys {
 		if !kc.Enabled {
@@ -241,7 +275,12 @@ func (c *Config) ToEndpoints() []*routing.Endpoint {
 		}
 
 		for _, mc := range kc.Models {
-			ep := routing.NewEndpoint(id, key, mc.Name, mc.Pricing.Input, mc.Pricing.Output)
+			// Calculate priority: price-first strategy (lower price = lower priority = preferred)
+			priority := int64((mc.Pricing.Input + mc.Pricing.Output) * priceScale)
+			ep, err := routing.NewEndpoint(id, key, mc.Name, priority)
+			if err != nil {
+				continue // skip invalid endpoint
+			}
 			endpoints = append(endpoints, ep)
 			id++
 		}
@@ -268,6 +307,19 @@ func (c *Config) FindKeyIndex(name string) int {
 		}
 	}
 	return -1
+}
+
+// GetAliasMap returns a map of model aliases (request model -> actual model)
+func (c *Config) GetAliasMap() map[string]string {
+	aliasMap := make(map[string]string)
+	for _, kc := range c.Keys {
+		for _, mc := range kc.Models {
+			if mc.Alias != "" {
+				aliasMap[mc.Name] = mc.Alias
+			}
+		}
+	}
+	return aliasMap
 }
 
 // Save saves configuration to file

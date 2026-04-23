@@ -70,6 +70,7 @@ keys:
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | name | string | 模型名称 |
+| alias | string | 模型别名（可选，将请求模型名映射到实际模型名） |
 | pricing.input | float | 输入价格（$/1K tokens） |
 | pricing.output | float | 输出价格（$/1K tokens） |
 
@@ -182,6 +183,33 @@ claude  # Claude Code 会自动使用 tokrouter
 export OPENAI_API_BASE=http://127.0.0.1:8765/v1
 aider --model gpt-4
 ```
+
+### 模型级路由
+请求只路由到匹配模型的端点。配置多个模型时，请求会自动路由到对应模型的端点。
+
+### 模型别名
+将请求模型名映射到实际模型名:
+```yaml
+keys:
+  - name: "openai"
+    models:
+      - name: "gpt-4-turbo"
+        alias: "gpt-4-1106-preview"  # 请求 gpt-4-turbo → 实际用 gpt-4-1106-preview
+        pricing: {input: 0.01, output: 0.03}
+```
+
+### 热重载
+无需重启即可重载配置:
+```bash
+kill -SIGHUP $(pidof tokrouter)
+```
+
+### 延迟感知路由
+端点选择策略：
+1. 价格优先（低价优先）
+2. 价格相同时，按 EWMA 延迟选择（近期延迟权重更高）
+
+自动避开响应慢的端点。
 
 ## 故障排查
 

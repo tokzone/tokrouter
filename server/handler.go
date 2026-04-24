@@ -21,6 +21,9 @@ type ctxKey string
 
 const TraceIDKey ctxKey = "trace_id"
 
+// MaxRequestBodySize limits request body size (10MB)
+const MaxRequestBodySize = 10 * 1024 * 1024
+
 // HandleRequest handles all requests using fluxcore
 func HandleRequest(routerSvc *router.Service, clientFormat routing.Protocol) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +57,7 @@ func HandleRequest(routerSvc *router.Service, clientFormat routing.Protocol) htt
 
 // handleStreaming handles streaming requests
 func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.Service, body []byte, clientFormat routing.Protocol, model string) {
-	result, err := routerSvc.ForwardStream(r.Context(), body, clientFormat)
+	result, pool, err := routerSvc.ForwardStream(r.Context(), body, clientFormat)
 	if err != nil {
 		WriteErrorResponse(w, http.StatusServiceUnavailable, NewErrorResponseWithCode(ErrCodeUpstreamFailed, err.Error()))
 		Warn("proxy stream failed", map[string]interface{}{
@@ -63,6 +66,7 @@ func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.S
 		})
 		return
 	}
+	defer result.Close()
 
 	// Write SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -87,6 +91,11 @@ func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.S
 		"input_tokens":  usage.InputTokens,
 		"output_tokens": usage.OutputTokens,
 	})
+
+	// Record usage for streaming request.
+	// Note: usage is recorded after stream completes, so it reflects actual token counts.
+	// If SSE write fails mid-stream, usage may be incomplete but still recorded.
+	routerSvc.RecordStreamUsage(usage, pool)
 }
 
 // handleNonStreaming handles non-streaming requests
@@ -116,7 +125,10 @@ func handleNonStreaming(w http.ResponseWriter, r *http.Request, routerSvc *route
 // HandleStatus handles status endpoint
 func HandleStatus(routerSvc *router.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		statuses := routerSvc.GetProviderStatuses()
+		var statuses []router.ProviderStatus
+		if routerSvc != nil {
+			statuses = routerSvc.ProviderStatuses()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(statuses)
 	}
@@ -130,7 +142,7 @@ func HandleHealth(routerSvc *router.Service) http.HandlerFunc {
 
 		// Check if at least one healthy endpoint exists
 		if routerSvc != nil {
-			statuses := routerSvc.GetProviderStatuses()
+			statuses := routerSvc.ProviderStatuses()
 			healthyCount := 0
 			for _, ps := range statuses {
 				if ps.Healthy {
@@ -146,7 +158,7 @@ func HandleHealth(routerSvc *router.Service) http.HandlerFunc {
 			}
 
 			// Check usage service
-			_, err := routerSvc.GetStats(usage.QueryFilter{})
+			_, err := routerSvc.Stats(usage.QueryFilter{})
 			if err != nil {
 				details["usage"] = "disabled"
 			} else {
@@ -168,7 +180,7 @@ func HandleHealth(routerSvc *router.Service) http.HandlerFunc {
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status":  status,
-			"version": "v0.1.0",
+			"version": "v0.6.0",
 			"details": details,
 		})
 	}

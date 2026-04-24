@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tokzone/tokrouter/config"
+	"github.com/tokzone/tokrouter/router"
 	"github.com/tokzone/tokrouter/usage"
 
 	"github.com/pterm/pterm"
@@ -57,7 +58,7 @@ func runSummary(c *cli.Command) error {
 		return fmt.Errorf("stats feature is disabled")
 	}
 
-	routerSvc, err := createRouter(cfg)
+	routerSvc, err := router.NewServiceFromConfig(cfg)
 	if err != nil {
 		return err
 	}
@@ -89,7 +90,7 @@ func runSummary(c *cli.Command) error {
 		GroupBy: usage.GroupByProvider,
 	}
 
-	stats, err := queryStats(routerSvc, filter)
+	stats, err := routerSvc.Stats(filter)
 	if err != nil {
 		return err
 	}
@@ -115,7 +116,7 @@ func printSummaryTable(stats []usage.StatRow, period string) {
 	pterm.DefaultSection.Printf("Usage Summary (%s)", period)
 
 	tableData := [][]string{
-		{"KEY", "INPUT", "OUTPUT", "COST", "REQUESTS"},
+		{"KEY", "INPUT", "OUTPUT", "REQUESTS", "AVG LATENCY", "SUCCESS"},
 	}
 
 	for _, row := range stats {
@@ -123,8 +124,9 @@ func printSummaryTable(stats []usage.StatRow, period string) {
 			row.GroupKey,
 			fmt.Sprintf("%d", row.InputTokens),
 			fmt.Sprintf("%d", row.OutputTokens),
-			fmt.Sprintf("$%.4f", float64(row.Cost)/10000),
 			fmt.Sprintf("%d", row.RequestCount),
+			fmt.Sprintf("%dms", row.AvgLatency),
+			fmt.Sprintf("%.1f%%", row.SuccessRate),
 		})
 	}
 
@@ -161,7 +163,7 @@ func exportCSV(stats []usage.StatRow, period string) {
 	defer writer.Flush()
 
 	// Header
-	writer.Write([]string{"key", "input_tokens", "output_tokens", "cost", "requests"})
+	writer.Write([]string{"key", "input_tokens", "output_tokens", "requests", "avg_latency_ms", "success_rate"})
 
 	// Data
 	for _, row := range stats {
@@ -169,8 +171,9 @@ func exportCSV(stats []usage.StatRow, period string) {
 			row.GroupKey,
 			fmt.Sprintf("%d", row.InputTokens),
 			fmt.Sprintf("%d", row.OutputTokens),
-			fmt.Sprintf("%.4f", float64(row.Cost)/10000),
 			fmt.Sprintf("%d", row.RequestCount),
+			fmt.Sprintf("%d", row.AvgLatency),
+			fmt.Sprintf("%.1f", row.SuccessRate),
 		})
 	}
 }

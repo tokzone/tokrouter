@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,21 +42,20 @@ type KeyConfig struct {
 }
 
 // Protocol returns the routing.Protocol for this key config
+// Returns ProtocolOpenAI as fallback if format is invalid (should not happen after Validate)
 func (k *KeyConfig) Protocol() routing.Protocol {
-	return ParseProtocol(k.Format)
+	p, err := ParseProtocol(k.Format)
+	if err != nil {
+		return routing.ProtocolOpenAI // explicit fallback
+	}
+	return p
 }
 
 // ModelConfig holds model configuration
 type ModelConfig struct {
-	Name    string        `mapstructure:"name"`
-	Alias   string        `mapstructure:"alias"`   // Optional: map request model name to actual model
-	Pricing PricingConfig `mapstructure:"pricing"`
-}
-
-// PricingConfig holds pricing configuration
-type PricingConfig struct {
-	Input  float64 `mapstructure:"input"`
-	Output float64 `mapstructure:"output"`
+	Name     string `mapstructure:"name"`
+	Alias    string `mapstructure:"alias"`    // Optional: map request model name to actual model
+	Priority int64  `mapstructure:"priority"` // Optional: endpoint priority (lower = preferred). Default 0.
 }
 
 // validLogLevels is the set of valid log levels
@@ -128,7 +128,7 @@ func Load(configPath string) (*Config, error) {
 
 	// Expand environment variables in secrets
 	for i := range cfg.Keys {
-		cfg.Keys[i].Secret = expandEnv(cfg.Keys[i].Secret)
+		cfg.Keys[i].Secret = expandEnv(cfg.Keys[i].Secret, cfg.Keys[i].Name)
 	}
 
 	// Resolve relative paths based on config file directory
@@ -178,89 +178,178 @@ func (c *Config) resolvePaths(configDir string) {
 func (c *Config) Validate() error {
 	// Validate server config
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
-		return fmt.Errorf("config invalid: invalid port %d", c.Server.Port)
+		return fmt.Errorf(`server.port: invalid value %d (must be 1-65535)
+
+Suggestion: Use a valid port number in config.yaml:
+  server:
+    port: 8765`, c.Server.Port)
 	}
 
 	// Validate keys
 	if len(c.Keys) == 0 {
-		return fmt.Errorf("config invalid: no keys configured")
+		return fmt.Errorf(`no keys configured
+
+Suggestion: Add at least one key in config.yaml:
+  keys:
+    - name: openai-main
+      format: openai
+      secret: "sk-..."  # or use "${OPENAI_API_KEY}"
+      base_url: "https://api.openai.com/v1"
+      enabled: true
+      models:
+        - name: gpt-4
+          priority: 0`)
 	}
 
-	for _, k := range c.Keys {
+	for i, k := range c.Keys {
 		if k.Enabled {
+			keyPath := fmt.Sprintf("keys[%d] (%q)", i, k.Name)
+			if k.Name == "" {
+				return fmt.Errorf(`%s: missing required field 'name'
+
+Suggestion: Add a name for this key in config.yaml:
+  keys:
+    - name: my-key-name  # required
+      ...`, keyPath)
+			}
 			if k.Secret == "" {
-				return fmt.Errorf("config invalid: key %s missing secret", k.Name)
+				return fmt.Errorf(`%s: missing required field 'secret'
+
+Suggestion: Add your API key in config.yaml:
+  keys:
+    - name: %s
+      secret: "sk-..."  # or use "${OPENAI_API_KEY}"
+      ...`, keyPath, k.Name)
 			}
 			if k.BaseURL == "" {
-				return fmt.Errorf("config invalid: key %s missing base_url", k.Name)
+				return fmt.Errorf(`%s: missing required field 'base_url'
+
+Suggestion: Add the API base URL in config.yaml:
+  keys:
+    - name: %s
+      base_url: "https://api.openai.com/v1"
+      ...`, keyPath, k.Name)
 			}
 			if k.Format == "" {
-				return fmt.Errorf("config invalid: key %s missing format", k.Name)
+				return fmt.Errorf(`%s: missing required field 'format'
+
+Suggestion: Add the format in config.yaml:
+  keys:
+    - name: %s
+      format: openai  # one of: openai, anthropic, gemini, cohere
+      ...`, keyPath, k.Name)
 			}
 			if !isValidProtocol(k.Format) {
-				return fmt.Errorf("config invalid: key %s has invalid format %s", k.Name, k.Format)
+				return fmt.Errorf(`%s: invalid format %q
+
+Suggestion: Use one of the supported formats:
+  - openai
+  - anthropic
+  - gemini
+  - cohere`, keyPath, k.Format)
 			}
 			if len(k.Models) == 0 {
-				return fmt.Errorf("config invalid: key %s has no models", k.Name)
+				return fmt.Errorf(`%s: no models configured
+
+Suggestion: Add at least one model in config.yaml:
+  keys:
+    - name: %s
+      models:
+        - name: gpt-4
+          priority: 0`, keyPath, k.Name)
 			}
 			for j, m := range k.Models {
 				if m.Name == "" {
-					return fmt.Errorf("config invalid: key %s model %d missing name", k.Name, j)
+					return fmt.Errorf(`%s.models[%d]: missing required field 'name'
+
+Suggestion: Add a model name:
+  models:
+    - name: gpt-4  # required
+      priority: 0`, keyPath, j)
 				}
 			}
 		}
 	}
 
 	if c.Stats.Enabled && c.Stats.DBPath == "" {
-		return fmt.Errorf("config invalid: stats.db_path required when stats.enabled=true")
+		return fmt.Errorf(`stats.db_path: required when stats.enabled=true
+
+Suggestion: Add db_path in config.yaml:
+  stats:
+    enabled: true
+    db_path: "./data/usage.db"`)
 	}
 
 	// Validate log config
 	if !validLogLevels[c.Log.Level] {
-		return fmt.Errorf("config invalid: invalid log level %s", c.Log.Level)
+		return fmt.Errorf(`log.level: invalid value %q
+
+Suggestion: Use one of the supported log levels:
+  - debug
+  - info
+  - warn
+  - error`, c.Log.Level)
 	}
 
 	return nil
 }
 
-// expandEnv expands environment variables in a string
-func expandEnv(s string) string {
+// expandEnv expands environment variables in a string.
+// Logs a warning if the environment variable is not set.
+func expandEnv(s string, keyName string) string {
 	if strings.HasPrefix(s, "${") && strings.HasSuffix(s, "}") {
 		envVar := s[2 : len(s)-1]
-		return os.Getenv(envVar)
+		val := os.Getenv(envVar)
+		if val == "" {
+			slog.Warn("environment variable not set",
+				"variable", envVar,
+				"key", keyName,
+				"suggestion", fmt.Sprintf("Set the environment variable: export %s=your-api-key", envVar))
+		}
+		return val
 	}
 	return s
 }
 
+// Protocol format constants for config files
+const (
+	FormatOpenAI    = "openai"
+	FormatAnthropic = "anthropic"
+	FormatGemini    = "gemini"
+	FormatCohere    = "cohere"
+)
+
 // ParseProtocol parses string to routing.Protocol
-func ParseProtocol(s string) routing.Protocol {
+func ParseProtocol(s string) (routing.Protocol, error) {
 	switch s {
-	case "anthropic":
-		return routing.ProtocolAnthropic
-	case "gemini":
-		return routing.ProtocolGemini
-	case "cohere":
-		return routing.ProtocolCohere
+	case FormatOpenAI:
+		return routing.ProtocolOpenAI, nil
+	case FormatAnthropic:
+		return routing.ProtocolAnthropic, nil
+	case FormatGemini:
+		return routing.ProtocolGemini, nil
+	case FormatCohere:
+		return routing.ProtocolCohere, nil
 	default:
-		return routing.ProtocolOpenAI
+		return routing.ProtocolOpenAI, fmt.Errorf("invalid protocol: %q", s)
 	}
+}
+
+// IsValidFormat checks if format string is valid (exported for CLI use)
+func IsValidFormat(s string) bool {
+	return s == FormatOpenAI || s == FormatAnthropic || s == FormatGemini || s == FormatCohere
 }
 
 // isValidProtocol checks if protocol string is valid
 func isValidProtocol(s string) bool {
-	switch s {
-	case "openai", "anthropic", "gemini", "cohere":
-		return true
-	}
-	return false
+	return IsValidFormat(s)
 }
 
 // ToEndpoints converts KeyConfig to routing.Endpoint
-// Priority is calculated as (inputPrice + outputPrice) * 1_000_000 for price-first routing.
+// Priority is set from config (lower = preferred). Default 0.
 func (c *Config) ToEndpoints() []*routing.Endpoint {
 	endpoints := make([]*routing.Endpoint, 0, len(c.Keys))
 
-	const priceScale = 1_000_000
 	id := uint(1)
 	for _, kc := range c.Keys {
 		if !kc.Enabled {
@@ -275,9 +364,7 @@ func (c *Config) ToEndpoints() []*routing.Endpoint {
 		}
 
 		for _, mc := range kc.Models {
-			// Calculate priority: price-first strategy (lower price = lower priority = preferred)
-			priority := int64((mc.Pricing.Input + mc.Pricing.Output) * priceScale)
-			ep, err := routing.NewEndpoint(id, key, mc.Name, priority)
+			ep, err := routing.NewEndpoint(id, key, mc.Name, mc.Priority)
 			if err != nil {
 				continue // skip invalid endpoint
 			}
@@ -309,13 +396,15 @@ func (c *Config) FindKeyIndex(name string) int {
 	return -1
 }
 
-// GetAliasMap returns a map of model aliases (request model -> actual model)
-func (c *Config) GetAliasMap() map[string]string {
+// AliasMap returns a map of model aliases (alias -> actual model name)
+// When a user requests the alias, it gets rewritten to the actual model name.
+func (c *Config) AliasMap() map[string]string {
 	aliasMap := make(map[string]string)
 	for _, kc := range c.Keys {
 		for _, mc := range kc.Models {
 			if mc.Alias != "" {
-				aliasMap[mc.Name] = mc.Alias
+				// User requests alias -> mapped to actual model name
+				aliasMap[mc.Alias] = mc.Name
 			}
 		}
 	}
@@ -336,13 +425,14 @@ func Save(configPath string, cfg *Config) error {
 	for _, kc := range cfg.Keys {
 		var models []interface{}
 		for _, mc := range kc.Models {
-			models = append(models, map[string]interface{}{
-				"name": mc.Name,
-				"pricing": map[string]interface{}{
-					"input":  mc.Pricing.Input,
-					"output": mc.Pricing.Output,
-				},
-			})
+			m := map[string]interface{}{
+				"name":     mc.Name,
+				"priority": mc.Priority,
+			}
+			if mc.Alias != "" {
+				m["alias"] = mc.Alias
+			}
+			models = append(models, m)
 		}
 		keys = append(keys, map[string]interface{}{
 			"name":     kc.Name,

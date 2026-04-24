@@ -6,11 +6,11 @@
 //
 // Basic usage:
 //
-//	storage, _ := usage.NewStorage("stats.db")
-//	svc := usage.NewService(storage)
+//	store, _ := usage.NewStore("stats.db")
+//	svc := usage.NewService(store)
 //
-//	// Record usage (prices are per-million-token)
-//	svc.RecordWithEndpoint(usage, endpoint, false, 0.01, 0.03)
+//	// Record usage
+//	svc.RecordWithEndpoint(usage, endpoint, false)
 //
 //	// Query stats
 //	stats, _ := svc.Query(usage.QueryFilter{

@@ -3,29 +3,32 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
-
-	"github.com/tokzone/tokrouter/config"
-	"github.com/tokzone/tokrouter/usage"
 
 	"github.com/tokzone/fluxcore/call"
 	"github.com/tokzone/fluxcore/message"
 	"github.com/tokzone/fluxcore/routing"
+
+	"github.com/tokzone/tokrouter/config"
+	"github.com/tokzone/tokrouter/usage"
 )
 
 // Service is the router application service
 type Service struct {
 	mu            sync.RWMutex
-	pool          *routing.EndpointPool // Single source of truth for routing
-	endpoints     []*routing.Endpoint   // Keep reference for status queries
-	modelMap      map[string][]*routing.Endpoint // Model to endpoints mapping
-	aliasMap      map[string]string                // Model alias mapping (request model -> actual model)
-	pricingMap    map[uint]config.PricingConfig    // Endpoint ID -> Pricing (for O(1) lookup)
+	state         *serviceState // Atomic state container
 	usageSvc      *usage.Service
-	cfg           *config.Config // Store config for ServerConfig extraction
 	healthLogger  *slog.Logger
 	lastHealthMap map[string]bool // Track last health state for change detection
+}
+
+// serviceState holds the mutable state of the service (swapped atomically on reload)
+type serviceState struct {
+	modelPools map[string]*routing.EndpointPool // Model -> EndpointPool
+	aliasMap   map[string]string                // Model alias mapping (request model -> actual model)
+	cfg        *config.Config                   // Store config for ServerConfig extraction
 }
 
 // ProviderStatus represents runtime status of a provider (separated from config)
@@ -40,155 +43,143 @@ type ProviderStatus struct {
 type ModelStatus struct {
 	Name    string
 	Healthy bool
-	Latency int
 }
 
 // NewService creates a router service from loaded endpoints
-func NewService(endpoints []*routing.Endpoint, usageSvc *usage.Service, retryMax int) (*Service, error) {
-	// Build EndpointPool from endpoints (pool is the single source of truth)
-	pool := routing.NewEndpointPool(endpoints, retryMax)
-
-	// Build model to endpoints mapping
-	modelMap := make(map[string][]*routing.Endpoint)
-	for _, ep := range endpoints {
-		modelMap[ep.Model] = append(modelMap[ep.Model], ep)
-	}
-
+func NewService(endpoints []*routing.Endpoint, usageSvc *usage.Service, retryMax int) *Service {
 	return &Service{
-		pool:          pool,
-		endpoints:     endpoints,
-		modelMap:      modelMap,
-		aliasMap:      make(map[string]string),
-		pricingMap:    make(map[uint]config.PricingConfig),
+		state: &serviceState{
+			modelPools: buildModelPools(endpoints, retryMax),
+			aliasMap:   make(map[string]string),
+		},
 		usageSvc:      usageSvc,
 		healthLogger:  slog.Default().With("component", "router"),
 		lastHealthMap: make(map[string]bool),
-	}, nil
+	}
+}
+
+// buildModelPools groups endpoints by model and creates a pool for each
+func buildModelPools(endpoints []*routing.Endpoint, retryMax int) map[string]*routing.EndpointPool {
+	modelEndpoints := make(map[string][]*routing.Endpoint)
+	for _, ep := range endpoints {
+		modelEndpoints[ep.Model] = append(modelEndpoints[ep.Model], ep)
+	}
+
+	pools := make(map[string]*routing.EndpointPool)
+	for model, eps := range modelEndpoints {
+		pools[model] = routing.NewEndpointPool(eps, retryMax)
+	}
+	return pools
 }
 
 // NewServiceFromConfig creates a router service from config (factory method)
-// This eliminates cross-layer dependency in cli/helpers.go
 func NewServiceFromConfig(cfg *config.Config) (*Service, error) {
 	endpoints := cfg.ToEndpoints()
 
 	var usageSvc *usage.Service
 	if cfg.Stats.Enabled {
-		storage, err := usage.NewStorage(cfg.Stats.DBPath)
+		store, err := usage.NewStore(cfg.Stats.DBPath)
 		if err != nil {
 			return nil, err
 		}
-		usageSvc = usage.NewService(storage)
+		usageSvc = usage.NewService(store)
 	}
 
-	svc, err := NewService(endpoints, usageSvc, cfg.Router.Retry.MaxRetries)
-	if err != nil {
-		return nil, err
-	}
-	svc.cfg = cfg
+	svc := NewService(endpoints, usageSvc, cfg.Router.Retry.MaxRetries)
+	svc.state.cfg = cfg
 
 	// Build alias map from config
-	svc.aliasMap = cfg.GetAliasMap()
-
-	// Build pricing map for O(1) lookup
-	svc.pricingMap = buildPricingMap(cfg, endpoints)
+	svc.state.aliasMap = cfg.AliasMap()
 
 	return svc, nil
 }
 
 // ServerConfig returns server configuration
 func (s *Service) ServerConfig() config.ServerConfig {
-	if s.cfg == nil {
+	s.mu.RLock()
+	cfg := s.state.cfg
+	s.mu.RUnlock()
+
+	if cfg == nil {
 		return config.ServerConfig{Host: "127.0.0.1", Port: 8765}
 	}
 	return config.ServerConfig{
-		Host:     s.cfg.Server.Host,
-		Port:     s.cfg.Server.Port,
-		TLSCert:  s.cfg.Server.TLSCert,
-		TLSKey:   s.cfg.Server.TLSKey,
-		LogLevel: s.cfg.Log.Level,
+		Host:     cfg.Server.Host,
+		Port:     cfg.Server.Port,
+		TLSCert:  cfg.Server.TLSCert,
+		TLSKey:   cfg.Server.TLSKey,
+		LogLevel: cfg.Log.Level,
 	}
 }
 
 // Forward forwards request to upstream provider (non-streaming)
 func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat routing.Protocol) ([]byte, *message.Usage, error) {
-	// Parse model from request
-	model := parseModelFromRequest(rawReq)
-
-	// Get alias and model maps under read lock
-	s.mu.RLock()
-	aliasMap := s.aliasMap
-	modelMap := s.modelMap
-	s.mu.RUnlock()
-
-	// Apply alias mapping if exists
-	if actualModel, ok := aliasMap[model]; ok {
-		model = actualModel
-		rawReq = rewriteModelInRequest(rawReq, model)
+	pool, epBefore, modifiedReq, err := s.prepareRequest(rawReq)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	// Select endpoint for model (no lock needed, using local modelMap)
-	epBefore := s.selectEndpointForModel(model, modelMap)
-
-	// Use global pool if no model-specific endpoint
-	pool := s.pool
-	if epBefore == nil {
-		epBefore = pool.CurrentEp()
-	}
-
-	resp, usage, err := call.Request(ctx, pool, rawReq, clientFormat)
+	resp, usage, err := call.Request(ctx, pool, modifiedReq, clientFormat)
 	if err != nil {
 		s.checkHealthChange(epBefore)
 		return nil, nil, err
 	}
 
-	// Update endpoint latency
-	if ep := pool.CurrentEp(); ep != nil && usage != nil {
-		ep.UpdateLatency(usage.LatencyMs)
-	}
-
 	// Record usage
 	if s.usageSvc != nil {
 		ep := pool.CurrentEp()
-		inputPrice, outputPrice := s.getPricing(ep)
-		s.usageSvc.RecordWithEndpoint(usage, ep, false, inputPrice, outputPrice)
+		s.usageSvc.RecordWithEndpoint(usage, ep, false) // ignore dropped status for non-streaming
 	}
 
 	return resp, usage, nil
 }
 
-// ForwardStream forwards request to upstream provider (streaming)
-func (s *Service) ForwardStream(ctx context.Context, rawReq []byte, clientFormat routing.Protocol) (*call.StreamResult, error) {
-	// Parse model from request
+// ForwardStream forwards request to upstream provider (streaming).
+// Returns the stream result and the pool (for usage recording after stream completes).
+func (s *Service) ForwardStream(ctx context.Context, rawReq []byte, clientFormat routing.Protocol) (*call.StreamResult, *routing.EndpointPool, error) {
+	pool, epBefore, modifiedReq, err := s.prepareRequest(rawReq)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	result, err := call.RequestStream(ctx, pool, modifiedReq, clientFormat)
+	if err != nil {
+		s.checkHealthChange(epBefore)
+		return nil, nil, err
+	}
+
+	return result, pool, nil
+}
+
+// RecordStreamUsage records usage after stream completes
+func (s *Service) RecordStreamUsage(usage *message.Usage, pool *routing.EndpointPool) {
+	if s.usageSvc == nil || usage == nil || pool == nil {
+		return
+	}
+	ep := pool.CurrentEp()
+	s.usageSvc.RecordWithEndpoint(usage, ep, true)
+}
+
+// prepareRequest extracts model, gets pool, and applies alias mapping.
+// Returns pool, endpoint before request, modified request, and error.
+func (s *Service) prepareRequest(rawReq []byte) (*routing.EndpointPool, *routing.Endpoint, []byte, error) {
 	model := parseModelFromRequest(rawReq)
 
-	// Get alias and model maps under read lock
+	// Apply alias mapping
 	s.mu.RLock()
-	aliasMap := s.aliasMap
-	modelMap := s.modelMap
+	state := s.state
 	s.mu.RUnlock()
 
-	// Apply alias mapping if exists
-	if actualModel, ok := aliasMap[model]; ok {
+	if actualModel, ok := state.aliasMap[model]; ok {
 		model = actualModel
 		rawReq = rewriteModelInRequest(rawReq, model)
 	}
-
-	// Select endpoint for model (no lock needed, using local modelMap)
-	epBefore := s.selectEndpointForModel(model, modelMap)
-
-	// Use global pool if no model-specific endpoint
-	pool := s.pool
-	if epBefore == nil {
-		epBefore = pool.CurrentEp()
+	pool, ok := state.modelPools[model]
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("no endpoint for model: %s", model)
 	}
 
-	result, err := call.RequestStream(ctx, pool, rawReq, clientFormat)
-	if err != nil {
-		s.checkHealthChange(epBefore)
-		return nil, err
-	}
-
-	return result, nil
+	return pool, pool.CurrentEp(), rawReq, nil
 }
 
 // checkHealthChange logs health state changes in real-time
@@ -216,20 +207,28 @@ func (s *Service) checkHealthChange(ep *routing.Endpoint) {
 	s.lastHealthMap[key] = currentHealthy
 }
 
-// CurrentEndpoint returns the current best endpoint
-func (s *Service) CurrentEndpoint() *routing.Endpoint {
-	return s.pool.CurrentEp()
-}
-
-// GetProviderStatuses returns runtime status of all providers
-func (s *Service) GetProviderStatuses() []ProviderStatus {
+// getPool returns the endpoint pool for a model
+func (s *Service) getPool(model string) (*routing.EndpointPool, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.state.modelPools == nil {
+		return nil, false
+	}
+	pool, ok := s.state.modelPools[model]
+	return pool, ok
+}
+
+// ProviderStatuses returns runtime status of all providers
+func (s *Service) ProviderStatuses() []ProviderStatus {
+	s.mu.RLock()
+	state := s.state
+	s.mu.RUnlock()
 
 	// Group by BaseURL (provider identifier)
 	providerMap := make(map[string]*ProviderStatus)
-	for _, ep := range s.endpoints {
-		if ep.Key == nil {
+	for _, pool := range state.modelPools {
+		ep := pool.CurrentEp()
+		if ep == nil || ep.Key == nil {
 			continue
 		}
 		providerKey := ep.Key.BaseURL
@@ -240,7 +239,7 @@ func (s *Service) GetProviderStatuses() []ProviderStatus {
 			}
 		}
 		provider := providerMap[providerKey]
-		modelHealthy := !ep.IsCircuitBreakerOpen() // Healthy if circuit breaker not open
+		modelHealthy := !ep.IsCircuitBreakerOpen()
 		provider.Models = append(provider.Models, ModelStatus{
 			Name:    ep.Model,
 			Healthy: modelHealthy,
@@ -250,7 +249,7 @@ func (s *Service) GetProviderStatuses() []ProviderStatus {
 		}
 	}
 
-	var statuses []ProviderStatus
+	statuses := make([]ProviderStatus, 0, len(providerMap))
 	for _, status := range providerMap {
 		statuses = append(statuses, *status)
 	}
@@ -258,8 +257,8 @@ func (s *Service) GetProviderStatuses() []ProviderStatus {
 	return statuses
 }
 
-// GetStats returns usage statistics
-func (s *Service) GetStats(filter usage.QueryFilter) ([]usage.StatRow, error) {
+// Stats returns usage statistics
+func (s *Service) Stats(filter usage.QueryFilter) ([]usage.StatRow, error) {
 	if s.usageSvc == nil {
 		return nil, usage.ErrDisabled
 	}
@@ -275,76 +274,36 @@ func (s *Service) Close() error {
 }
 
 // Reload reloads endpoints from config (for hot reload)
-func (s *Service) Reload(cfg *config.Config) {
+func (s *Service) Reload(cfg *config.Config) error {
+	// Validate config before applying
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+
 	endpoints := cfg.ToEndpoints()
 
+	// Get retryMax from existing pool
+	s.mu.RLock()
+	retryMax := 2 // default
+	for _, pool := range s.state.modelPools {
+		retryMax = pool.RetryMax()
+		break
+	}
+	s.mu.RUnlock()
+
+	// Create new state (atomic swap)
+	newState := &serviceState{
+		cfg:        cfg,
+		aliasMap:   cfg.AliasMap(),
+		modelPools: buildModelPools(endpoints, retryMax),
+	}
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.state = newState
+	s.mu.Unlock()
 
-	// Update endpoints
-	s.endpoints = endpoints
-	s.cfg = cfg
-	s.aliasMap = cfg.GetAliasMap()
-	s.pricingMap = buildPricingMap(cfg, endpoints)
-
-	// Rebuild model map
-	s.modelMap = make(map[string][]*routing.Endpoint)
-	for _, ep := range endpoints {
-		s.modelMap[ep.Model] = append(s.modelMap[ep.Model], ep)
-	}
-
-	// Rebuild pool
-	s.pool = routing.NewEndpointPool(endpoints, s.pool.RetryMax())
-
-	s.healthLogger.Info("config reloaded", "endpoints", len(endpoints))
-}
-
-// getPricing returns the pricing for an endpoint from config (O(1) lookup)
-func (s *Service) getPricing(ep *routing.Endpoint) (inputPrice, outputPrice float64) {
-	if ep == nil {
-		return 0, 0
-	}
-	if pricing, ok := s.pricingMap[ep.ID]; ok {
-		return pricing.Input, pricing.Output
-	}
-	return 0, 0
-}
-
-// buildPricingMap creates endpoint ID -> pricing mapping for O(1) lookup
-func buildPricingMap(cfg *config.Config, endpoints []*routing.Endpoint) map[uint]config.PricingConfig {
-	pricingMap := make(map[uint]config.PricingConfig)
-	for _, ep := range endpoints {
-		for _, kc := range cfg.Keys {
-			if kc.BaseURL == ep.Key.BaseURL {
-				for _, mc := range kc.Models {
-					if mc.Name == ep.Model {
-						pricingMap[ep.ID] = mc.Pricing
-					}
-				}
-			}
-		}
-	}
-	return pricingMap
-}
-
-// selectEndpointForModel selects the best healthy endpoint for a specific model.
-func (s *Service) selectEndpointForModel(model string, modelMap map[string][]*routing.Endpoint) *routing.Endpoint {
-	endpoints, ok := modelMap[model]
-	if !ok || len(endpoints) == 0 {
-		return nil
-	}
-
-	// Find best healthy endpoint (zero allocation)
-	var best *routing.Endpoint
-	for _, ep := range endpoints {
-		if ep.IsCircuitBreakerOpen() {
-			continue
-		}
-		if best == nil || ep.Priority < best.Priority {
-			best = ep
-		}
-	}
-	return best
+	s.healthLogger.Info("config reloaded", "models", len(newState.modelPools))
+	return nil
 }
 
 // parseModelFromRequest extracts model field from raw JSON request

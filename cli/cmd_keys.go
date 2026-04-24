@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tokzone/tokrouter/config"
 
+	"github.com/AlecAivazis/survey/v2"
 	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"
 )
@@ -28,27 +30,23 @@ var keysCmd = &cli.Command{
 		},
 		{
 			Name:  "add",
-			Usage: "Add a new key",
+			Usage: "Add a new key (interactive if no flags provided)",
 			Flags: []cli.Flag{
 				&cli.StringFlag{
-					Name:     "name",
-					Usage:    "key name",
-					Required: true,
+					Name:  "name",
+					Usage: "key name",
 				},
 				&cli.StringFlag{
-					Name:     "format",
-					Usage:    "format (openai/anthropic/gemini/cohere)",
-					Required: true,
+					Name:  "format",
+					Usage: "format (openai/anthropic/gemini/cohere)",
 				},
 				&cli.StringFlag{
-					Name:     "secret",
-					Usage:    "API key secret",
-					Required: true,
+					Name:  "secret",
+					Usage: "API key secret",
 				},
 				&cli.StringFlag{
-					Name:     "base-url",
-					Usage:    "API base URL",
-					Required: true,
+					Name:  "base-url",
+					Usage: "API base URL",
 				},
 			},
 			Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -115,12 +113,11 @@ func runKeysList(c *cli.Command) error {
 		pterm.Printf("  BaseURL: %s\n", k.BaseURL)
 		pterm.Printf("  Models:  %d\n", len(k.Models))
 
-		tableData := [][]string{{"MODEL", "INPUT PRICE", "OUTPUT PRICE"}}
+		tableData := [][]string{{"MODEL", "PRIORITY"}}
 		for _, m := range k.Models {
 			tableData = append(tableData, []string{
 				m.Name,
-				fmt.Sprintf("$%.4f/1K", m.Pricing.Input),
-				fmt.Sprintf("$%.4f/1K", m.Pricing.Output),
+				fmt.Sprintf("%d", m.Priority),
 			})
 		}
 		pterm.DefaultTable.WithHasHeader().WithData(tableData).Render()
@@ -135,6 +132,28 @@ func runKeysAdd(c *cli.Command) error {
 	secret := c.String("secret")
 	baseURL := c.String("base-url")
 
+	// Interactive mode if no flags provided
+	if name == "" && format == "" && secret == "" && baseURL == "" {
+		return runKeysAddInteractive(c)
+	}
+
+	// Validate required flags in non-interactive mode
+	if name == "" {
+		return fmt.Errorf("flag --name is required")
+	}
+	if format == "" {
+		return fmt.Errorf("flag --format is required")
+	}
+	if !config.IsValidFormat(format) {
+		return fmt.Errorf("invalid format: %s (must be openai/anthropic/gemini/cohere)", format)
+	}
+	if secret == "" {
+		return fmt.Errorf("flag --secret is required")
+	}
+	if baseURL == "" {
+		return fmt.Errorf("flag --base-url is required")
+	}
+
 	configPath := getConfigPath(c)
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -142,10 +161,8 @@ func runKeysAdd(c *cli.Command) error {
 	}
 
 	// Check if key already exists
-	for _, k := range cfg.Keys {
-		if k.Name == name {
-			return fmt.Errorf("key '%s' already exists", name)
-		}
+	if err := checkKeyExists(cfg, name); err != nil {
+		return err
 	}
 
 	// Add new key
@@ -166,10 +183,127 @@ func runKeysAdd(c *cli.Command) error {
 	return nil
 }
 
+func runKeysAddInteractive(c *cli.Command) error {
+	pterm.DefaultSection.Println("Add a new key")
+
+	// Key name
+	var name string
+	namePrompt := &survey.Input{
+		Message: "Key name:",
+	}
+	if err := survey.AskOne(namePrompt, &name); err != nil || name == "" {
+		return fmt.Errorf("key name is required")
+	}
+
+	// Format
+	var format string
+	formatPrompt := &survey.Select{
+		Message: "Format:",
+		Options: []string{config.FormatOpenAI, config.FormatAnthropic, config.FormatGemini, config.FormatCohere},
+		Default: config.FormatOpenAI,
+	}
+	if err := survey.AskOne(formatPrompt, &format); err != nil {
+		return err
+	}
+
+	// Base URL
+	defaultURL := getDefaultURL(format)
+	var baseURL string
+	urlPrompt := &survey.Input{
+		Message: "Base URL:",
+		Default: defaultURL,
+	}
+	if err := survey.AskOne(urlPrompt, &baseURL); err != nil || baseURL == "" {
+		return fmt.Errorf("base URL is required")
+	}
+
+	// Secret
+	var secret string
+	secretPrompt := &survey.Password{
+		Message: "API Key:",
+	}
+	if err := survey.AskOne(secretPrompt, &secret); err != nil || secret == "" {
+		return fmt.Errorf("API key is required")
+	}
+
+	// Models
+	var models []config.ModelConfig
+	pterm.Println()
+	pterm.DefaultSection.WithLevel(2).Println("Add models")
+
+	for {
+		var modelName string
+		modelPrompt := &survey.Input{
+			Message: "Model name (empty to finish):",
+		}
+		if err := survey.AskOne(modelPrompt, &modelName); err != nil || modelName == "" {
+			break
+		}
+
+		var priority int64
+		priorityPrompt := &survey.Input{
+			Message: "Priority (lower = preferred, default 0):",
+			Default: "0",
+		}
+		survey.AskOne(priorityPrompt, &priority)
+
+		models = append(models, config.ModelConfig{
+			Name:     modelName,
+			Priority: priority,
+		})
+
+		var addAnother bool
+		addPrompt := &survey.Confirm{
+			Message: "Add another model?",
+			Default: false,
+		}
+		survey.AskOne(addPrompt, &addAnother)
+		if !addAnother {
+			break
+		}
+	}
+
+	if len(models) == 0 {
+		pterm.Warning.Println("No models added, key will be created without models")
+	}
+
+	configPath := getConfigPath(c)
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+
+	// Check if key already exists
+	if err := checkKeyExists(cfg, name); err != nil {
+		return err
+	}
+
+	// Add new key
+	newKey := config.KeyConfig{
+		Name:    name,
+		Format:  format,
+		Secret:  secret,
+		BaseURL: baseURL,
+		Enabled: true,
+		Models:  models,
+	}
+	cfg.Keys = append(cfg.Keys, newKey)
+
+	if err := config.Save(configPath, cfg); err != nil {
+		return err
+	}
+
+	pterm.Success.Printf("Key '%s' added successfully\n", name)
+	return nil
+}
+
 func runKeysRemove(c *cli.Command) error {
 	args := c.Args()
 	if args.Len() == 0 {
-		return fmt.Errorf("key name required")
+		return fmt.Errorf(`Key name is required.
+
+Usage: tokrouter keys remove <name>
+Example: tokrouter keys remove openai-backup`)
 	}
 
 	name := args.First()
@@ -181,7 +315,7 @@ func runKeysRemove(c *cli.Command) error {
 
 	idx := cfg.FindKeyIndex(name)
 	if idx < 0 {
-		return fmt.Errorf("key '%s' not found", name)
+		return listAvailableKeysError(cfg, name)
 	}
 
 	cfg.Keys = append(cfg.Keys[:idx], cfg.Keys[idx+1:]...)
@@ -197,7 +331,14 @@ func runKeysRemove(c *cli.Command) error {
 func runKeysEnable(c *cli.Command, enable bool) error {
 	args := c.Args()
 	if args.Len() == 0 {
-		return fmt.Errorf("key name required")
+		action := "enable"
+		if !enable {
+			action = "disable"
+		}
+		return fmt.Errorf(`Key name is required.
+
+Usage: tokrouter keys %s <name>
+Example: tokrouter keys %s openai-main`, action, action)
 	}
 
 	keyName := args.First()
@@ -236,7 +377,12 @@ func updateConfigKey(configPath, keyName string, enable bool) error {
 func runKeysPing(c *cli.Command) error {
 	args := c.Args()
 	if args.Len() == 0 {
-		return fmt.Errorf("key name required")
+		return fmt.Errorf(`Key name is required.
+
+Usage: tokrouter keys ping <name>
+Example: tokrouter keys ping openai-main
+
+Use 'tokrouter keys list' to see all keys.`)
 	}
 
 	keyName := args.First()
@@ -250,7 +396,7 @@ func runKeysPing(c *cli.Command) error {
 	// Find the key
 	targetKey := cfg.FindKey(keyName)
 	if targetKey == nil {
-		return fmt.Errorf("key '%s' not found", keyName)
+		return listAvailableKeysError(cfg, keyName)
 	}
 
 	if !targetKey.Enabled {
@@ -263,21 +409,40 @@ func runKeysPing(c *cli.Command) error {
 	pterm.Println()
 
 	// Test each model
+	passed := 0
+	failed := 0
 	for _, model := range targetKey.Models {
 		pterm.Printf("  Testing model '%s'... ", model.Name)
 
+		start := time.Now()
 		err := testModel(targetKey, model.Name)
+		latency := time.Since(start)
+
 		if err != nil {
 			pterm.Error.Printf("FAILED: %v\n", err)
+			failed++
 		} else {
-			pterm.Success.Println("OK")
+			pterm.Success.Printf("OK (%dms)\n", latency.Milliseconds())
+			passed++
 		}
+	}
+
+	// Print summary
+	pterm.Println()
+	if passed > 0 && failed == 0 {
+		pterm.Success.Printf("Summary: %d passed, %d failed\n", passed, failed)
+	} else if failed > 0 {
+		pterm.Warning.Printf("Summary: %d passed, %d failed\n", passed, failed)
+	} else {
+		pterm.Info.Println("No models to test")
 	}
 	return nil
 }
 
+const testTimeout = 10 * time.Second
+
 func testModel(key *config.KeyConfig, modelName string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 
 	// Build test request
@@ -285,7 +450,7 @@ func testModel(key *config.KeyConfig, modelName string) error {
 	var url string
 
 	switch key.Format {
-	case "anthropic":
+	case config.FormatAnthropic:
 		url = key.BaseURL + "/v1/messages"
 		req := map[string]interface{}{
 			"model":      modelName,
@@ -314,14 +479,14 @@ func testModel(key *config.KeyConfig, modelName string) error {
 
 	req.Header.Set("Content-Type", "application/json")
 	switch key.Format {
-	case "anthropic":
+	case config.FormatAnthropic:
 		req.Header.Set("x-api-key", key.Secret)
 		req.Header.Set("anthropic-version", "2023-06-01")
 	default:
 		req.Header.Set("Authorization", "Bearer "+key.Secret)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: testTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
@@ -345,4 +510,30 @@ func testModel(key *config.KeyConfig, modelName string) error {
 	}
 
 	return nil
+}
+
+// checkKeyExists returns error if key already exists
+func checkKeyExists(cfg *config.Config, name string) error {
+	if cfg.FindKey(name) != nil {
+		return fmt.Errorf(`Key '%s' already exists.
+
+Suggestions:
+  - Use 'tokrouter keys enable %s' to enable it
+  - Choose a different name for the new key
+  - Use 'tokrouter keys list' to see existing keys`, name, name)
+	}
+	return nil
+}
+
+// listAvailableKeysError returns error with available key names
+func listAvailableKeysError(cfg *config.Config, keyName string) error {
+	var keyNames []string
+	for _, k := range cfg.Keys {
+		keyNames = append(keyNames, k.Name)
+	}
+	return fmt.Errorf(`Key '%s' not found.
+
+Available keys: %s
+
+Use 'tokrouter keys list' to see all keys.`, keyName, strings.Join(keyNames, ", "))
 }

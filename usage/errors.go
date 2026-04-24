@@ -2,9 +2,10 @@ package usage
 
 import "errors"
 
-// Errors for usage module
-var (
-	ErrDisabled       = errors.New("usage tracking is disabled")
-	ErrInvalidFilter  = errors.New("invalid query filter")
-	ErrRecordNotFound = errors.New("usage record not found")
-)
+// ErrDisabled is returned when usage tracking is disabled
+var ErrDisabled = errors.New(`usage tracking is disabled
+
+Enable it in config.yaml:
+  stats:
+    enabled: true
+    db_path: "./data/usage.db"`)

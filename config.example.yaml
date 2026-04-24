@@ -1,29 +1,19 @@
-# tokrouter configuration example
+# tokrouter configuration - minimal example
+# Only required fields are shown. All other settings have defaults.
 
-server:
-  host: "127.0.0.1"  # localhost only for personal use
-  port: 8765         # avoid Clash default port 7890
-
+# Keys configuration (required - at least one key)
 keys:
   - name: openai-main
     base_url: "https://api.openai.com/v1"
     format: openai
-    secret: "${OPENAI_API_KEY}"
+    secret: "${OPENAI_API_KEY}"  # Use env var or paste key directly
     enabled: true
     models:
       - name: gpt-4
-        pricing:
-          input: 0.03
-          output: 0.06
-      - name: gpt-4-turbo
-        alias: gpt-4-1106-preview  # Optional: map request model to actual model
-        pricing:
-          input: 0.01
-          output: 0.03
+        # priority: optional, lower = preferred. Default 0.
+        priority: 100
       - name: gpt-3.5-turbo
-        pricing:
-          input: 0.0015
-          output: 0.002
+        # No priority = default 0 (highest)
 
   - name: anthropic-main
     base_url: "https://api.anthropic.com/v1"
@@ -32,40 +22,30 @@ keys:
     enabled: true
     models:
       - name: claude-3-opus
-        pricing:
-          input: 0.015
-          output: 0.075
       - name: claude-3-sonnet
-        pricing:
-          input: 0.003
-          output: 0.015
 
-  - name: zhipu-main
-    base_url: "https://open.bigmodel.cn/api/paas/v4"
-    format: openai
-    secret: "${ZHIPU_API_KEY}"
-    enabled: true
-    models:
-      - name: glm-4
-        pricing:
-          input: 0.1
-          output: 0.1
+# Optional: Override defaults below
+# All these sections have sensible defaults, only include if you need to customize.
 
-router:
-  retry:
-    max_retries: 2
-    timeout: "30s"
-    backoff: "exponential"
+# server:
+#   host: "127.0.0.1"  # default: 127.0.0.1
+#   port: 8765         # default: 8765
 
-stats:
-  enabled: true
-  db_path: "./data/usage.db"
+# router:
+#   retry:
+#     max_retries: 2    # default: 2
+#     timeout: "30s"    # default: 30s
+#     backoff: "exponential"  # default: exponential
 
-log:
-  level: "info"
-  format: "json"
-  output: "stdout"
+# stats:
+#   enabled: true       # default: true
+#   db_path: "./data/usage.db"  # default: ./data/usage.db
 
-trace:
-  enabled: true
-  header: "x-request-id"
+# log:
+#   level: "info"       # default: info (debug/info/warn/error)
+#   format: "json"      # default: json (json/text)
+#   output: "stdout"    # default: stdout
+
+# trace:
+#   enabled: true       # default: true
+#   header: "x-request-id"  # default: x-request-id

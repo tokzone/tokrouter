@@ -6,15 +6,7 @@ import (
 	"strings"
 )
 
-// Logger interface for dependency injection
-type Logger interface {
-	Debug(msg string, fields map[string]interface{})
-	Info(msg string, fields map[string]interface{})
-	Warn(msg string, fields map[string]interface{})
-	Error(msg string, fields map[string]interface{})
-}
-
-// SlogLogger wraps slog.Logger to implement Logger interface
+// SlogLogger wraps slog.Logger
 type SlogLogger struct {
 	*slog.Logger
 }
@@ -86,11 +78,6 @@ func SetLogLevel(level string) {
 func init() {
 	// Default logger
 	defaultLogger = NewSlogLogger("info")
-}
-
-// GetLogger returns the default logger
-func GetLogger() Logger {
-	return defaultLogger
 }
 
 // Debug logs at debug level (convenience function)

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/tokzone/tokrouter/config"
+	"github.com/tokzone/tokrouter/router"
 	"github.com/tokzone/tokrouter/server"
 
 	"github.com/urfave/cli/v3"
@@ -13,6 +14,11 @@ var serveCmd = &cli.Command{
 	Name:  "serve",
 	Usage: "Start HTTP server",
 	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "host",
+			Usage: "server host",
+			Value: "127.0.0.1",
+		},
 		&cli.IntFlag{
 			Name:  "port",
 			Usage: "server port",
@@ -26,6 +32,7 @@ var serveCmd = &cli.Command{
 
 func runServe(c *cli.Command) error {
 	configPath := getConfigPath(c)
+	host := c.String("host")
 	port := c.Int("port")
 
 	cfg, err := config.Load(configPath)
@@ -33,11 +40,14 @@ func runServe(c *cli.Command) error {
 		return err
 	}
 
+	if host != "127.0.0.1" {
+		cfg.Server.Host = host
+	}
 	if port != 8765 {
 		cfg.Server.Port = port
 	}
 
-	routerSvc, err := createRouter(cfg)
+	routerSvc, err := router.NewServiceFromConfig(cfg)
 	if err != nil {
 		return err
 	}

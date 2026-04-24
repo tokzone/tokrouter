@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/tokzone/tokrouter/config"
 	"github.com/tokzone/tokrouter/router"
@@ -68,7 +69,7 @@ func NewServer(routerSvc *router.Service, traceCfg config.TraceConfig, configPat
 
 // Run starts the HTTP server
 func (s *Server) Run() {
-	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
@@ -80,15 +81,23 @@ func (s *Server) Run() {
 				fmt.Println("Received SIGHUP, reloading config...")
 				cfg, err := config.Load(s.configPath)
 				if err != nil {
-					fmt.Printf("Error reloading config: %v\n", err)
+					fmt.Printf("Error loading config: %v\n", err)
 					continue
 				}
-				s.router.Reload(cfg)
+				if err := s.router.Reload(cfg); err != nil {
+					fmt.Printf("Error applying config: %v\n", err)
+					continue
+				}
 				fmt.Println("Config reloaded successfully")
 			case syscall.SIGINT, syscall.SIGTERM:
 				fmt.Println("\nShutting down...")
-				s.server.Shutdown(ctx)
-				cancel()
+				// Graceful shutdown with timeout
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer shutdownCancel()
+				if err := s.server.Shutdown(shutdownCtx); err != nil {
+					fmt.Printf("Shutdown error: %v\n", err)
+				}
+				close(done)
 				return
 			}
 		}
@@ -111,5 +120,6 @@ func (s *Server) Run() {
 		}
 	}
 
+	<-done // Wait for shutdown signal handler
 	s.router.Close()
 }

@@ -5,11 +5,7 @@ import "fmt"
 // Error codes for structured error handling
 const (
 	ErrCodeInvalidRequest = "INVALID_REQUEST"
-	ErrCodeNoEndpoint     = "NO_ENDPOINT"
 	ErrCodeUpstreamFailed = "UPSTREAM_FAILED"
-	ErrCodeUnauthorized   = "UNAUTHORIZED"
-	ErrCodeRateLimited    = "RATE_LIMITED"
-	ErrCodeModelNotFound  = "MODEL_NOT_FOUND"
 	ErrCodeInternalError  = "INTERNAL_ERROR"
 )
 
@@ -30,25 +26,9 @@ var errorDefinitions = map[string]struct {
 		message:    "Invalid request format",
 		suggestion: "Check that your request body is valid JSON and matches the expected format",
 	},
-	ErrCodeNoEndpoint: {
-		message:    "No healthy endpoint available",
-		suggestion: "Check that at least one key is enabled and has healthy models. Use 'tokrouter status' to check key health",
-	},
 	ErrCodeUpstreamFailed: {
 		message:    "Upstream provider request failed",
 		suggestion: "Check your network connection and API key validity. Use 'tokrouter test --key <name>' to verify",
-	},
-	ErrCodeUnauthorized: {
-		message:    "Authentication failed with upstream provider",
-		suggestion: "Verify your API key is correct and has not expired. Check the key in config.yaml",
-	},
-	ErrCodeRateLimited: {
-		message:    "Rate limit exceeded",
-		suggestion: "Wait a moment and retry, or add additional keys for this provider",
-	},
-	ErrCodeModelNotFound: {
-		message:    "Model not found",
-		suggestion: "Check that the model name is correct and supported by the provider",
 	},
 	ErrCodeInternalError: {
 		message:    "Internal server error",
@@ -58,10 +38,14 @@ var errorDefinitions = map[string]struct {
 
 // NewErrorResponse creates an error response with code and suggestion
 func NewErrorResponse(err error) *ErrorResponse {
+	msg := "unknown error"
+	if err != nil {
+		msg = err.Error()
+	}
 	return &ErrorResponse{
 		Type:    "error",
 		Code:    ErrCodeInternalError,
-		Message: err.Error(),
+		Message: msg,
 	}
 }
 
@@ -69,6 +53,8 @@ func NewErrorResponse(err error) *ErrorResponse {
 func NewErrorResponseWithCode(code string, details string) *ErrorResponse {
 	def, ok := errorDefinitions[code]
 	if !ok {
+		// Unknown code defaults to internal error
+		code = ErrCodeInternalError
 		def = errorDefinitions[ErrCodeInternalError]
 	}
 

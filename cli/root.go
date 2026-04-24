@@ -8,7 +8,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var version = "dev"
+var version = "v0.6.0"
 
 // Execute runs the CLI
 func Execute() {
@@ -29,6 +29,7 @@ func Execute() {
 			serveCmd,
 			statusCmd,
 			keysCmd,
+			modelsCmd,
 			summaryCmd,
 			configCmd,
 		},

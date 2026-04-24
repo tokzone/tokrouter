@@ -23,9 +23,7 @@ keys:
     enabled: true
     models:
       - name: "gpt-4"
-        pricing:
-          input: 0.03
-          output: 0.06
+        priority: 100
 
 stats:
   enabled: false
@@ -74,9 +72,7 @@ keys:
     enabled: true
     models:
       - name: "gpt-4"
-        pricing:
-          input: 0.03
-          output: 0.06
+        priority: 100
 
 stats:
   enabled: false
@@ -176,8 +172,8 @@ func TestToEndpoints(t *testing.T) {
 				Secret:  "sk-test",
 				Enabled: true,
 				Models: []ModelConfig{
-					{Name: "gpt-4", Pricing: PricingConfig{Input: 0.03, Output: 0.06}},
-					{Name: "gpt-3.5", Pricing: PricingConfig{Input: 0.001, Output: 0.002}},
+					{Name: "gpt-4", Priority: 100},
+					{Name: "gpt-3.5", Priority: 10},
 				},
 			},
 			{
@@ -205,9 +201,9 @@ func TestToEndpoints(t *testing.T) {
 	if endpoints[0].Model != "gpt-4" {
 		t.Errorf("Model = %s, want gpt-4", endpoints[0].Model)
 	}
-	// Priority is calculated from pricing: (0.03 + 0.06) * 1_000_000 = 90000
-	if endpoints[0].Priority != 90000 {
-		t.Errorf("Priority = %d, want 90000", endpoints[0].Priority)
+	// Priority is set from config
+	if endpoints[0].Priority != 100 {
+		t.Errorf("Priority = %d, want 100", endpoints[0].Priority)
 	}
 }
 
@@ -229,9 +225,7 @@ keys:
     enabled: true
     models:
       - name: "gpt-4"
-        pricing:
-          input: 0.03
-          output: 0.06
+        priority: 100
 
 stats:
   enabled: true
@@ -285,9 +279,7 @@ keys:
     enabled: true
     models:
       - name: "gpt-4"
-        pricing:
-          input: 0.03
-          output: 0.06
+        priority: 100
 
 stats:
   enabled: true
@@ -308,5 +300,118 @@ log:
 	// Absolute path should remain unchanged
 	if cfg.Stats.DBPath != absPath {
 		t.Errorf("DBPath = %s, want %s", cfg.Stats.DBPath, absPath)
+	}
+}
+
+func TestParseProtocol(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantError bool
+	}{
+		{"openai", "openai", false},
+		{"anthropic", "anthropic", false},
+		{"gemini", "gemini", false},
+		{"cohere", "cohere", false},
+		{"invalid", "invalid", true},
+		{"empty", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseProtocol(tt.input)
+			if (err != nil) != tt.wantError {
+				t.Errorf("ParseProtocol(%q) error = %v, wantError %v", tt.input, err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestAliasMap(t *testing.T) {
+	cfg := &Config{
+		Keys: []KeyConfig{
+			{
+				Name: "test",
+				Models: []ModelConfig{
+					// Name is actual model, Alias is what user requests
+					{Name: "gpt-4-turbo", Alias: "gpt-4"},
+					{Name: "gpt-3.5", Alias: ""}, // no alias
+				},
+			},
+		},
+	}
+
+	aliasMap := cfg.AliasMap()
+	if len(aliasMap) != 1 {
+		t.Errorf("aliasMap length = %d, want 1", len(aliasMap))
+	}
+
+	// User requests "gpt-4" -> rewritten to actual model "gpt-4-turbo"
+	if aliasMap["gpt-4"] != "gpt-4-turbo" {
+		t.Errorf("alias = %s, want gpt-4-turbo", aliasMap["gpt-4"])
+	}
+}
+
+func TestSave(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	cfg := &Config{
+		Server: ServerConfig{Port: 8765},
+		Keys: []KeyConfig{
+			{
+				Name:    "test",
+				BaseURL: "https://api.example.com",
+				Format:  "openai",
+				Secret:  "test-secret",
+				Enabled: true,
+				Models: []ModelConfig{
+					{Name: "gpt-4", Priority: 100},
+					{Name: "gpt-4-turbo", Alias: "gpt-4-1106-preview", Priority: 50},
+				},
+			},
+		},
+		Log: LogConfig{Level: "info"},
+	}
+
+	if err := Save(configPath, cfg); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Load and verify
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if len(loaded.Keys) != 1 {
+		t.Errorf("Keys count = %d, want 1", len(loaded.Keys))
+	}
+
+	if len(loaded.Keys[0].Models) != 2 {
+		t.Errorf("Models count = %d, want 2", len(loaded.Keys[0].Models))
+	}
+}
+
+func TestIsValidFormat(t *testing.T) {
+	tests := []struct {
+		format string
+		want   bool
+	}{
+		{FormatOpenAI, true},
+		{FormatAnthropic, true},
+		{FormatGemini, true},
+		{FormatCohere, true},
+		{"invalid", false},
+		{"", false},
+		{"OPENAI", false}, // case sensitive
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			if got := IsValidFormat(tt.format); got != tt.want {
+				t.Errorf("IsValidFormat(%s) = %v, want %v", tt.format, got, tt.want)
+			}
+		})
 	}
 }

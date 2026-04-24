@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 
 	"github.com/tokzone/tokrouter/config"
 
@@ -21,14 +23,28 @@ var initCmd = &cli.Command{
 
 func runInit(c *cli.Command) error {
 	pterm.DefaultSection.Println("tokrouter init - Interactive configuration")
+	pterm.Info.Println("Press Ctrl+C at any time to cancel")
+	pterm.Println()
 
-	// Ask for server port
+	// Ask for server port with validation
 	var port int
-	portPrompt := &survey.Input{
-		Message: "Server port:",
-		Default: "8765",
+	for {
+		portPrompt := &survey.Input{
+			Message: "Server port:",
+			Default: "8765",
+		}
+		var portStr string
+		if err := survey.AskOne(portPrompt, &portStr); err != nil {
+			return err
+		}
+		var err error
+		port, err = strconv.Atoi(portStr)
+		if err != nil || port < 1 || port > 65535 {
+			pterm.Error.Println("Invalid port. Must be a number between 1 and 65535")
+			continue
+		}
+		break
 	}
-	survey.AskOne(portPrompt, &port)
 
 	// Ask for keys
 	var keys []config.KeyConfig
@@ -50,26 +66,39 @@ func runInit(c *cli.Command) error {
 		var format string
 		formatPrompt := &survey.Select{
 			Message: "Choose format:",
-			Options: []string{"openai", "anthropic", "gemini", "cohere"},
-			Default: "openai",
+			Options: []string{config.FormatOpenAI, config.FormatAnthropic, config.FormatGemini, config.FormatCohere},
+			Default: config.FormatOpenAI,
 		}
 		survey.AskOne(formatPrompt, &format)
 
-		// Base URL
+		// Base URL with validation
 		defaultURL := getDefaultURL(format)
 		var baseURL string
-		urlPrompt := &survey.Input{
-			Message: "Base URL:",
-			Default: defaultURL,
+		for {
+			urlPrompt := &survey.Input{
+				Message: "Base URL:",
+				Default: defaultURL,
+			}
+			if err := survey.AskOne(urlPrompt, &baseURL); err != nil {
+				return err
+			}
+			u, err := url.Parse(baseURL)
+			if err != nil || u.Scheme == "" || u.Host == "" {
+				pterm.Error.Println("Invalid URL format. Please enter a valid URL (e.g., https://api.openai.com/v1)")
+				continue
+			}
+			break
 		}
-		survey.AskOne(urlPrompt, &baseURL)
 
 		// Secret
 		var secret string
 		secretPrompt := &survey.Password{
 			Message: "API Key:",
 		}
-		survey.AskOne(secretPrompt, &secret)
+		if err := survey.AskOne(secretPrompt, &secret); err != nil || secret == "" {
+			pterm.Warning.Println("No API key provided, skipping this key")
+			continue
+		}
 
 		// Models
 		var models []config.ModelConfig
@@ -82,26 +111,16 @@ func runInit(c *cli.Command) error {
 				break
 			}
 
-			var inputPrice float64
-			inputPricePrompt := &survey.Input{
-				Message: "Input price per 1K tokens:",
-				Default: "0.03",
+			var priority int64
+			priorityPrompt := &survey.Input{
+				Message: "Priority (lower = preferred, default 0):",
+				Default: "0",
 			}
-			survey.AskOne(inputPricePrompt, &inputPrice)
-
-			var outputPrice float64
-			outputPricePrompt := &survey.Input{
-				Message: "Output price per 1K tokens:",
-				Default: "0.06",
-			}
-			survey.AskOne(outputPricePrompt, &outputPrice)
+			survey.AskOne(priorityPrompt, &priority)
 
 			models = append(models, config.ModelConfig{
-				Name: modelName,
-				Pricing: config.PricingConfig{
-					Input:  inputPrice,
-					Output: outputPrice,
-				},
+				Name:     modelName,
+				Priority: priority,
 			})
 		}
 
@@ -164,6 +183,29 @@ func runInit(c *cli.Command) error {
 		},
 	}
 
+	// Show configuration summary and confirm
+	pterm.Println()
+	pterm.DefaultSection.Println("Configuration Summary")
+	pterm.Printf("  Server: 127.0.0.1:%d\n", port)
+	pterm.Printf("  Keys: %d\n", len(keys))
+	for _, k := range keys {
+		pterm.Printf("    - %s (%s): %d models\n", k.Name, k.Format, len(k.Models))
+	}
+	pterm.Println()
+
+	var confirm bool
+	confirmPrompt := &survey.Confirm{
+		Message: "Save this configuration?",
+		Default: true,
+	}
+	if err := survey.AskOne(confirmPrompt, &confirm); err != nil {
+		return err
+	}
+	if !confirm {
+		pterm.Info.Println("Configuration not saved")
+		return nil
+	}
+
 	// Write config
 	configPath := getConfigPath(c)
 	if err := config.Save(configPath, cfg); err != nil {
@@ -181,13 +223,13 @@ func runInit(c *cli.Command) error {
 
 func getDefaultURL(format string) string {
 	switch format {
-	case "openai":
+	case config.FormatOpenAI:
 		return "https://api.openai.com/v1"
-	case "anthropic":
+	case config.FormatAnthropic:
 		return "https://api.anthropic.com/v1"
-	case "gemini":
+	case config.FormatGemini:
 		return "https://generativelanguage.googleapis.com/v1"
-	case "cohere":
+	case config.FormatCohere:
 		return "https://api.cohere.ai/v1"
 	default:
 		return ""

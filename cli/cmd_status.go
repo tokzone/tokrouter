@@ -38,7 +38,7 @@ func runStatus(c *cli.Command) error {
 		return err
 	}
 
-	routerSvc, err := createRouter(cfg)
+	routerSvc, err := router.NewServiceFromConfig(cfg)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func clearScreen() {
 }
 
 func printStatus(routerSvc *router.Service) {
-	statuses := routerSvc.GetProviderStatuses()
+	statuses := routerSvc.ProviderStatuses()
 
 	pterm.DefaultSection.Println("Key Status")
 

@@ -6,7 +6,7 @@ import "time"
 type GroupBy string
 
 const (
-	GroupByProvider GroupBy = "provider" // Renamed from "key" for semantic clarity
+	GroupByProvider GroupBy = "provider"
 	GroupByModel    GroupBy = "model"
 	GroupByDay      GroupBy = "day"
 )
@@ -25,15 +25,9 @@ type StatRow struct {
 	GroupKey     string // group by value
 	InputTokens  int64
 	OutputTokens int64
-	Cost         int64 // Unified to int64 (cents * 10000)
 	RequestCount int64
 	AvgLatency   int64
 	SuccessRate  float64
-}
-
-// TotalTokens returns total tokens
-func (s StatRow) TotalTokens() int64 {
-	return s.InputTokens + s.OutputTokens
 }
 
 // MonthRange returns start and end of current month

@@ -221,6 +221,7 @@ tokrouter serve
 │  endpoint/          Global registry         │
 │  provider/          Provider abstraction    │
 │  message/           Request/Response IR     │
+│  errors/            Error classification    │
 │  translate/         Anthropic ↔ OpenAI      │
 │                                             │
 └─────────────────────────────────────────────┘
@@ -238,11 +239,13 @@ type Service struct {
     mu            sync.RWMutex
     state         *serviceState  // Atomic state container (swapped on reload)
     usageSvc      *usage.Service
+    healthLogger  *slog.Logger
 }
 
 type serviceState struct {
     clients   map[string]*flux.Client  // Model -> flux.Client
     aliasMap  map[string]string         // Model alias mapping
+    cfg       *config.Config            // Current configuration
     retryMax  int                       // Retry configuration
 }
 
@@ -250,16 +253,22 @@ func NewService(userEndpoints []*flux.UserEndpoint, usageSvc *usage.Service, ret
     // Build clients - each model has its own flux.Client
     clients := buildClients(userEndpoints, retryMax)
     return &Service{
-        state:    &serviceState{clients: clients, aliasMap: make(map[string]string)},
-        usageSvc: usageSvc,
+        state:        &serviceState{clients: clients, aliasMap: make(map[string]string), retryMax: retryMax},
+        usageSvc:     usageSvc,
+        healthLogger: slog.Default().With("component", "router"),
     }
 }
 
 func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat provider.Protocol) ([]byte, *message.Usage, error) {
     client, model, providerURL, req, err := s.prepareRequestWithDetails(rawReq)
+    s.healthLogger.Debug("forward starting", "model", model, "provider", providerURL)
     resp, usage, err := client.Do(ctx, req, clientFormat)
-    s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL)  // Track cost with provider
-    return resp, usage, err
+    if err != nil {
+        s.healthLogger.Error("forward failed", "model", model, "provider", providerURL, "error", err.Error())
+        return nil, nil, err
+    }
+    s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL, false)  // Track cost with provider
+    return resp, usage, nil
 }
 ```
 

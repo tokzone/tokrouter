@@ -199,6 +199,7 @@ tokrouter serve
 │  endpoint/          全局注册中心            │
 │  provider/          提供商抽象              │
 │  message/           请求/响应中间表示       │
+│  errors/            错误分类                │
 │  translate/         Anthropic ↔ OpenAI      │
 │                                             │
 └─────────────────────────────────────────────┘
@@ -216,11 +217,13 @@ type Service struct {
     mu            sync.RWMutex
     state         *serviceState  // 原子状态容器（重载时交换）
     usageSvc      *usage.Service
+    healthLogger  *slog.Logger
 }
 
 type serviceState struct {
     clients   map[string]*flux.Client  // 模型 -> flux.Client
     aliasMap  map[string]string         // 模型别名映射
+    cfg       *config.Config            // 当前配置
     retryMax  int                       // 重试配置
 }
 
@@ -228,16 +231,22 @@ func NewService(userEndpoints []*flux.UserEndpoint, usageSvc *usage.Service, ret
     // 构建客户端 - 每个模型有独立的 flux.Client
     clients := buildClients(userEndpoints, retryMax)
     return &Service{
-        state:    &serviceState{clients: clients, aliasMap: make(map[string]string)},
-        usageSvc: usageSvc,
+        state:        &serviceState{clients: clients, aliasMap: make(map[string]string), retryMax: retryMax},
+        usageSvc:     usageSvc,
+        healthLogger: slog.Default().With("component", "router"),
     }
 }
 
 func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat provider.Protocol) ([]byte, *message.Usage, error) {
     client, model, providerURL, req, err := s.prepareRequestWithDetails(rawReq)
+    s.healthLogger.Debug("forward starting", "model", model, "provider", providerURL)
     resp, usage, err := client.Do(ctx, req, clientFormat)
-    s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL)  // 记录成本（含提供商）
-    return resp, usage, err
+    if err != nil {
+        s.healthLogger.Error("forward failed", "model", model, "provider", providerURL, "error", err.Error())
+        return nil, nil, err
+    }
+    s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL, false)  // 记录成本（含提供商）
+    return resp, usage, nil
 }
 ```
 

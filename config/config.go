@@ -9,7 +9,9 @@ import (
 
 	"github.com/spf13/viper"
 
-	"github.com/tokzone/fluxcore/routing"
+	"github.com/tokzone/fluxcore/endpoint"
+	"github.com/tokzone/fluxcore/flux"
+	"github.com/tokzone/fluxcore/provider"
 )
 
 // Config is the main configuration structure
@@ -41,12 +43,12 @@ type KeyConfig struct {
 	Models  []ModelConfig `mapstructure:"models"`
 }
 
-// Protocol returns the routing.Protocol for this key config
+// Protocol returns the provider.Protocol for this key config
 // Returns ProtocolOpenAI as fallback if format is invalid (should not happen after Validate)
-func (k *KeyConfig) Protocol() routing.Protocol {
+func (k *KeyConfig) Protocol() provider.Protocol {
 	p, err := ParseProtocol(k.Format)
 	if err != nil {
-		return routing.ProtocolOpenAI // explicit fallback
+		return provider.ProtocolOpenAI // explicit fallback
 	}
 	return p
 }
@@ -319,19 +321,19 @@ const (
 	FormatCohere    = "cohere"
 )
 
-// ParseProtocol parses string to routing.Protocol
-func ParseProtocol(s string) (routing.Protocol, error) {
+// ParseProtocol parses string to provider.Protocol
+func ParseProtocol(s string) (provider.Protocol, error) {
 	switch s {
 	case FormatOpenAI:
-		return routing.ProtocolOpenAI, nil
+		return provider.ProtocolOpenAI, nil
 	case FormatAnthropic:
-		return routing.ProtocolAnthropic, nil
+		return provider.ProtocolAnthropic, nil
 	case FormatGemini:
-		return routing.ProtocolGemini, nil
+		return provider.ProtocolGemini, nil
 	case FormatCohere:
-		return routing.ProtocolCohere, nil
+		return provider.ProtocolCohere, nil
 	default:
-		return routing.ProtocolOpenAI, fmt.Errorf("invalid protocol: %q", s)
+		return provider.ProtocolOpenAI, fmt.Errorf("invalid protocol: %q", s)
 	}
 }
 
@@ -345,35 +347,47 @@ func isValidProtocol(s string) bool {
 	return IsValidFormat(s)
 }
 
-// ToEndpoints converts KeyConfig to routing.Endpoint
-// Priority is set from config (lower = preferred). Default 0.
-func (c *Config) ToEndpoints() []*routing.Endpoint {
-	endpoints := make([]*routing.Endpoint, 0, len(c.Keys))
+func (c *Config) ToUserEndpoints() []*flux.UserEndpoint {
+	totalModels := 0
+	for _, kc := range c.Keys {
+		if kc.Enabled {
+			totalModels += len(kc.Models)
+		}
+	}
+	userEndpoints := make([]*flux.UserEndpoint, 0, totalModels)
 
-	id := uint(1)
+	providerID := uint(1)
+	endpointID := uint(1)
+
 	for _, kc := range c.Keys {
 		if !kc.Enabled {
 			continue
 		}
 
-		// Create Key (shared across models for this provider)
-		key := &routing.Key{
-			BaseURL:  kc.BaseURL,
-			APIKey:   kc.Secret,
-			Protocol: kc.Protocol(), // direct conversion
+		prov := provider.NewProvider(providerID, kc.BaseURL, kc.Protocol())
+		providerID++
+
+		apiKey, err := flux.NewAPIKey(prov, kc.Secret)
+		if err != nil {
+			continue
 		}
 
 		for _, mc := range kc.Models {
-			ep, err := routing.NewEndpoint(id, key, mc.Name, mc.Priority)
-			if err != nil {
-				continue // skip invalid endpoint
+			ep := endpoint.RegisterEndpoint(endpointID, prov, mc.Name)
+			if ep == nil {
+				continue
 			}
-			endpoints = append(endpoints, ep)
-			id++
+			endpointID++
+
+			ue, err := flux.NewUserEndpoint(mc.Name, apiKey, mc.Priority)
+			if err != nil {
+				continue
+			}
+			userEndpoints = append(userEndpoints, ue)
 		}
 	}
 
-	return endpoints
+	return userEndpoints
 }
 
 // FindKey finds a key by name, returns nil if not found

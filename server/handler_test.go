@@ -8,11 +8,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tokzone/fluxcore/endpoint"
+	"github.com/tokzone/fluxcore/flux"
+	"github.com/tokzone/fluxcore/provider"
 	"github.com/tokzone/tokrouter/config"
 	"github.com/tokzone/tokrouter/router"
-
-	"github.com/tokzone/fluxcore/routing"
 )
+
+func setupTestRouterService() *router.Service {
+	endpoint.GlobalRegistry().Clear()
+	prov := provider.NewProvider(1, "https://api.example.com", provider.ProtocolOpenAI)
+	endpoint.RegisterEndpoint(1, prov, "gpt-4")
+	k, _ := flux.NewAPIKey(prov, "test-key")
+	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
+	return router.NewService([]*flux.UserEndpoint{ue}, nil, 2)
+}
 
 func TestHandleHealth(t *testing.T) {
 	handler := HandleHealth(nil)
@@ -36,13 +46,7 @@ func TestHandleHealth(t *testing.T) {
 }
 
 func TestHandleHealthWithRouter(t *testing.T) {
-	key := &routing.Key{
-		BaseURL:  "https://api.example.com",
-		APIKey:   "test-key",
-		Protocol: routing.ProtocolOpenAI,
-	}
-	ep, _ := routing.NewEndpoint(1, key, "gpt-4", 0)
-	svc := router.NewService([]*routing.Endpoint{ep}, nil, 2)
+	svc := setupTestRouterService()
 	defer svc.Close()
 
 	handler := HandleHealth(svc)
@@ -66,19 +70,16 @@ func TestHandleHealthWithRouter(t *testing.T) {
 }
 
 func TestHandleHealthDegraded(t *testing.T) {
-	// Create service with unhealthy endpoints by marking them as failed
-	key := &routing.Key{
-		BaseURL:  "https://api.example.com",
-		APIKey:   "test-key",
-		Protocol: routing.ProtocolOpenAI,
-	}
-	ep, _ := routing.NewEndpoint(1, key, "gpt-4", 0)
-	// Mark endpoint as failed 3 times to trigger circuit breaker
-	ep.MarkFail()
-	ep.MarkFail()
-	ep.MarkFail()
+	endpoint.GlobalRegistry().Clear()
+	prov := provider.NewProvider(1, "https://api.example.com", provider.ProtocolOpenAI)
+	ep := endpoint.RegisterEndpoint(1, prov, "gpt-4")
+	ep.MarkEndpointFail()
+	ep.MarkEndpointFail()
+	ep.MarkEndpointFail()
 
-	svc := router.NewService([]*routing.Endpoint{ep}, nil, 2)
+	k, _ := flux.NewAPIKey(prov, "test-key")
+	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
+	svc := router.NewService([]*flux.UserEndpoint{ue}, nil, 2)
 	defer svc.Close()
 
 	handler := HandleHealth(svc)
@@ -101,16 +102,10 @@ func TestHandleHealthDegraded(t *testing.T) {
 }
 
 func TestHandleRequestInvalidJSON(t *testing.T) {
-	key := &routing.Key{
-		BaseURL:  "https://api.example.com",
-		APIKey:   "test-key",
-		Protocol: routing.ProtocolOpenAI,
-	}
-	ep, _ := routing.NewEndpoint(1, key, "gpt-4", 0)
-	svc := router.NewService([]*routing.Endpoint{ep}, nil, 2)
+	svc := setupTestRouterService()
 	defer svc.Close()
 
-	handler := HandleRequest(svc, routing.ProtocolOpenAI)
+	handler := HandleRequest(svc, provider.ProtocolOpenAI)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("invalid json"))
 	w := httptest.NewRecorder()
 
@@ -122,16 +117,10 @@ func TestHandleRequestInvalidJSON(t *testing.T) {
 }
 
 func TestHandleRequestMissingModel(t *testing.T) {
-	key := &routing.Key{
-		BaseURL:  "https://api.example.com",
-		APIKey:   "test-key",
-		Protocol: routing.ProtocolOpenAI,
-	}
-	ep, _ := routing.NewEndpoint(1, key, "gpt-4", 0)
-	svc := router.NewService([]*routing.Endpoint{ep}, nil, 2)
+	svc := setupTestRouterService()
 	defer svc.Close()
 
-	handler := HandleRequest(svc, routing.ProtocolOpenAI)
+	handler := HandleRequest(svc, provider.ProtocolOpenAI)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"messages": []}`))
 	w := httptest.NewRecorder()
 
@@ -216,13 +205,7 @@ func TestHandleStatus(t *testing.T) {
 }
 
 func TestHandleStatusWithRouter(t *testing.T) {
-	key := &routing.Key{
-		BaseURL:  "https://api.example.com",
-		APIKey:   "test-key",
-		Protocol: routing.ProtocolOpenAI,
-	}
-	ep, _ := routing.NewEndpoint(1, key, "gpt-4", 0)
-	svc := router.NewService([]*routing.Endpoint{ep}, nil, 2)
+	svc := setupTestRouterService()
 	defer svc.Close()
 
 	handler := HandleStatus(svc)
@@ -270,13 +253,7 @@ func TestWriteErrorResponseWithCode(t *testing.T) {
 }
 
 func TestNewServer(t *testing.T) {
-	key := &routing.Key{
-		BaseURL:  "https://api.example.com",
-		APIKey:   "test-key",
-		Protocol: routing.ProtocolOpenAI,
-	}
-	ep, _ := routing.NewEndpoint(1, key, "gpt-4", 0)
-	svc := router.NewService([]*routing.Endpoint{ep}, nil, 2)
+	svc := setupTestRouterService()
 	defer svc.Close()
 
 	traceCfg := config.TraceConfig{Enabled: true, Header: "x-request-id"}

@@ -6,7 +6,7 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
-[![Build](https://img.shields.io/github/actions/workflow/status/tokflux/tokrouter/ci.yml?style=flat-square)](https://github.com/tokflux/tokrouter/actions)
+[![Build](https://img.shields.io/github/actions/workflow/status/tokflux/tokrouter/release.yml?style=flat-square)](https://github.com/tokflux/tokrouter/actions)
 
 [English Documentation](README.md)
 
@@ -195,8 +195,9 @@ tokrouter serve
 │                                             │
 │              fluxcore (领域层)              │
 │                                             │
-│  routing/           端点 + 池               │
-│  call/              HTTP + 重试 + 降级      │
+│  flux/              Client + UserEndpoint   │
+│  endpoint/          全局注册中心            │
+│  provider/          提供商抽象              │
 │  message/           请求/响应中间表示       │
 │  translate/         Anthropic ↔ OpenAI      │
 │                                             │
@@ -218,29 +219,29 @@ type Service struct {
 }
 
 type serviceState struct {
-    modelPools map[string]*routing.EndpointPool  // 模型 -> 端点池
-    aliasMap   map[string]string                 // 模型别名映射
+    clients   map[string]*flux.Client  // 模型 -> flux.Client
+    aliasMap  map[string]string         // 模型别名映射
+    retryMax  int                       // 重试配置
 }
 
-func NewService(endpoints []*routing.Endpoint, usageSvc *usage.Service, retryMax int) *Service {
-    // 构建模型池 - 每个模型有独立的端点池
-    pools := buildModelPools(endpoints, retryMax)
+func NewService(userEndpoints []*flux.UserEndpoint, usageSvc *usage.Service, retryMax int) *Service {
+    // 构建客户端 - 每个模型有独立的 flux.Client
+    clients := buildClients(userEndpoints, retryMax)
     return &Service{
-        state: &serviceState{modelPools: pools, aliasMap: make(map[string]string)},
+        state:    &serviceState{clients: clients, aliasMap: make(map[string]string)},
         usageSvc: usageSvc,
     }
 }
 
-func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat string) ([]byte, *message.Usage, error) {
-    model := parseModelFromRequest(rawReq)
-    pool := s.getPool(model)  // 路由到模型专属池
-    resp, usage, err := call.Request(ctx, pool, rawReq, clientFormat)
-    s.usageSvc.Record(usage)  // 记录成本
+func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat provider.Protocol) ([]byte, *message.Usage, error) {
+    client, model, providerURL, req, err := s.prepareRequestWithDetails(rawReq)
+    resp, usage, err := client.Do(ctx, req, clientFormat)
+    s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL)  // 记录成本（含提供商）
     return resp, usage, err
 }
 ```
 
-所有路由逻辑（端点选择、重试、降级）由 fluxcore 领域层处理。
+所有路由逻辑（端点选择、重试、降级）由 fluxcore 的 `flux.Client` 处理。
 
 ---
 

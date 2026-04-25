@@ -13,7 +13,7 @@ import (
 	"github.com/tokzone/tokrouter/router"
 	"github.com/tokzone/tokrouter/usage"
 
-	"github.com/tokzone/fluxcore/routing"
+	"github.com/tokzone/fluxcore/provider"
 )
 
 // TraceIDKey is the context key for trace ID
@@ -25,7 +25,7 @@ const TraceIDKey ctxKey = "trace_id"
 const MaxRequestBodySize = 10 * 1024 * 1024
 
 // HandleRequest handles all requests using fluxcore
-func HandleRequest(routerSvc *router.Service, clientFormat routing.Protocol) http.HandlerFunc {
+func HandleRequest(routerSvc *router.Service, clientFormat provider.Protocol) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Read request body with size limit
 		body, err := io.ReadAll(io.LimitReader(r.Body, MaxRequestBodySize))
@@ -56,8 +56,8 @@ func HandleRequest(routerSvc *router.Service, clientFormat routing.Protocol) htt
 }
 
 // handleStreaming handles streaming requests
-func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.Service, body []byte, clientFormat routing.Protocol, model string) {
-	result, pool, err := routerSvc.ForwardStream(r.Context(), body, clientFormat)
+func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.Service, body []byte, clientFormat provider.Protocol, model string) {
+	result, actualModel, providerURL, err := routerSvc.ForwardStream(r.Context(), body, clientFormat)
 	if err != nil {
 		WriteErrorResponse(w, http.StatusServiceUnavailable, NewErrorResponseWithCode(ErrCodeUpstreamFailed, err.Error()))
 		Warn("proxy stream failed", map[string]interface{}{
@@ -87,7 +87,8 @@ func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.S
 
 	usage := result.Usage()
 	Info("stream completed", map[string]interface{}{
-		"model":         model,
+		"model":         actualModel,
+		"provider":      providerURL,
 		"input_tokens":  usage.InputTokens,
 		"output_tokens": usage.OutputTokens,
 	})
@@ -95,11 +96,11 @@ func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.S
 	// Record usage for streaming request.
 	// Note: usage is recorded after stream completes, so it reflects actual token counts.
 	// If SSE write fails mid-stream, usage may be incomplete but still recorded.
-	routerSvc.RecordStreamUsage(usage, pool)
+	routerSvc.RecordStreamUsage(usage, actualModel, providerURL)
 }
 
 // handleNonStreaming handles non-streaming requests
-func handleNonStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.Service, body []byte, clientFormat routing.Protocol, model string) {
+func handleNonStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.Service, body []byte, clientFormat provider.Protocol, model string) {
 	resp, usage, err := routerSvc.Forward(r.Context(), body, clientFormat)
 	if err != nil {
 		WriteErrorResponse(w, http.StatusServiceUnavailable, NewErrorResponseWithCode(ErrCodeUpstreamFailed, err.Error()))

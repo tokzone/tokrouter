@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/tokzone/fluxcore/endpoint"
 )
 
 func TestLoad(t *testing.T) {
@@ -162,7 +164,10 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestToEndpoints(t *testing.T) {
+func TestToUserEndpoints(t *testing.T) {
+	// Clear global registry before test
+	endpoint.GlobalRegistry().Clear()
+
 	cfg := &Config{
 		Keys: []KeyConfig{
 			{
@@ -187,23 +192,23 @@ func TestToEndpoints(t *testing.T) {
 		},
 	}
 
-	endpoints := cfg.ToEndpoints()
+	userEndpoints := cfg.ToUserEndpoints()
 
-	// Should have 2 endpoints (from enabled key with 2 models)
-	if len(endpoints) != 2 {
-		t.Errorf("Endpoints count = %d, want 2", len(endpoints))
+	// Should have 2 user endpoints (from enabled key with 2 models)
+	if len(userEndpoints) != 2 {
+		t.Errorf("UserEndpoints count = %d, want 2", len(userEndpoints))
 	}
 
-	// Check first endpoint
-	if endpoints[0].Key.BaseURL != "https://api.openai.com/v1" {
-		t.Errorf("BaseURL = %s, want https://api.openai.com/v1", endpoints[0].Key.BaseURL)
+	// Check first user endpoint
+	if userEndpoints[0].BaseURL() != "https://api.openai.com/v1" {
+		t.Errorf("BaseURL = %s, want https://api.openai.com/v1", userEndpoints[0].BaseURL())
 	}
-	if endpoints[0].Model != "gpt-4" {
-		t.Errorf("Model = %s, want gpt-4", endpoints[0].Model)
+	if userEndpoints[0].Model() != "gpt-4" {
+		t.Errorf("Model = %s, want gpt-4", userEndpoints[0].Model())
 	}
 	// Priority is set from config
-	if endpoints[0].Priority != 100 {
-		t.Errorf("Priority = %d, want 100", endpoints[0].Priority)
+	if userEndpoints[0].Priority() != 100 {
+		t.Errorf("Priority = %d, want 100", userEndpoints[0].Priority())
 	}
 }
 

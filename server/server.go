@@ -13,7 +13,7 @@ import (
 	"github.com/tokzone/tokrouter/config"
 	"github.com/tokzone/tokrouter/router"
 
-	"github.com/tokzone/fluxcore/routing"
+	"github.com/tokzone/fluxcore/provider"
 )
 
 // Server represents HTTP server
@@ -35,8 +35,8 @@ func NewServer(routerSvc *router.Service, traceCfg config.TraceConfig, configPat
 		return WithTraceID(next, traceCfg)
 	}
 
-	mux.HandleFunc("/v1/chat/completions", traceMiddleware(HandleRequest(routerSvc, routing.ProtocolOpenAI)))
-	mux.HandleFunc("/v1/messages", traceMiddleware(HandleRequest(routerSvc, routing.ProtocolAnthropic)))
+	mux.HandleFunc("/v1/chat/completions", traceMiddleware(HandleRequest(routerSvc, provider.ProtocolOpenAI)))
+	mux.HandleFunc("/v1/messages", traceMiddleware(HandleRequest(routerSvc, provider.ProtocolAnthropic)))
 	mux.HandleFunc("/status", traceMiddleware(HandleStatus(routerSvc)))
 	mux.HandleFunc("/health", traceMiddleware(HandleHealth(routerSvc)))
 

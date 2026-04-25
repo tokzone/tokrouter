@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/tokzone/fluxcore/message"
-	"github.com/tokzone/fluxcore/routing"
 )
 
 const recordBufferSize = 1000
@@ -44,35 +43,66 @@ func (s *Service) recordWorker() {
 	}
 }
 
-// RecordWithEndpoint records usage with endpoint info (non-blocking)
-// Returns true if record was queued, false if dropped due to buffer full
-func (s *Service) RecordWithEndpoint(usage *message.Usage, ep *routing.Endpoint, isStream bool) bool {
-	if s.store == nil || usage == nil || ep == nil {
-		return false
-	}
-
-	record := &Record{
-		Timestamp:    time.Now(),
-		Provider:     ep.Key.BaseURL, // Use BaseURL as provider identifier
-		Model:        ep.Model,
-		InputTokens:  int64(usage.InputTokens),
-		OutputTokens: int64(usage.OutputTokens),
-		Success:      usage.InputTokens > 0 || usage.OutputTokens > 0,
-		Stream:       isStream,
-		LatencyMS:    uint16(usage.LatencyMs),
-	}
-
-	// Non-blocking send, drop if buffer full
+// enqueue sends a record to the buffer (non-blocking)
+func (s *Service) enqueue(record *Record) bool {
 	select {
 	case s.recordCh <- record:
 		return true
 	default:
 		count := s.droppedCount.Add(1)
-		if count%100 == 0 { // Log every 100 drops
+		if count%100 == 0 {
 			s.logger.Warn("usage records dropped", "count", count)
 		}
 		return false
 	}
+}
+
+// Record records usage (non-blocking)
+func (s *Service) Record(usage *message.Usage, isStream bool) bool {
+	if s.store == nil || usage == nil {
+		return false
+	}
+	return s.enqueue(&Record{
+		Timestamp:    time.Now(),
+		InputTokens:  int64(usage.InputTokens),
+		OutputTokens: int64(usage.OutputTokens),
+		Success:      usage.InputTokens > 0 || usage.OutputTokens > 0,
+		Stream:       isStream,
+		LatencyMS:    uint16(usage.LatencyMs),
+	})
+}
+
+// RecordWithModel records usage with model info (non-blocking)
+func (s *Service) RecordWithModel(usage *message.Usage, model string, isStream bool) bool {
+	if s.store == nil || usage == nil {
+		return false
+	}
+	return s.enqueue(&Record{
+		Timestamp:    time.Now(),
+		Model:        model,
+		InputTokens:  int64(usage.InputTokens),
+		OutputTokens: int64(usage.OutputTokens),
+		Success:      usage.InputTokens > 0 || usage.OutputTokens > 0,
+		Stream:       isStream,
+		LatencyMS:    uint16(usage.LatencyMs),
+	})
+}
+
+// RecordWithModelAndProvider records usage with model and provider info (non-blocking)
+func (s *Service) RecordWithModelAndProvider(usage *message.Usage, model string, provider string, isStream bool) bool {
+	if s.store == nil || usage == nil {
+		return false
+	}
+	return s.enqueue(&Record{
+		Timestamp:    time.Now(),
+		Provider:     provider,
+		Model:        model,
+		InputTokens:  int64(usage.InputTokens),
+		OutputTokens: int64(usage.OutputTokens),
+		Success:      usage.InputTokens > 0 || usage.OutputTokens > 0,
+		Stream:       isStream,
+		LatencyMS:    uint16(usage.LatencyMs),
+	})
 }
 
 // Query queries usage statistics

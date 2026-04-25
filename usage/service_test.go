@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/tokzone/fluxcore/message"
-	"github.com/tokzone/fluxcore/routing"
 )
 
 // mockStore implements Store for testing
@@ -73,17 +72,10 @@ func TestNewService(t *testing.T) {
 	svc.Close()
 }
 
-func TestRecordWithEndpoint(t *testing.T) {
+func TestRecord(t *testing.T) {
 	store := newMockStore()
 	svc := NewService(store)
 	defer svc.Close()
-
-	key := &routing.Key{
-		BaseURL:  "https://api.example.com",
-		APIKey:   "test-key",
-		Protocol: routing.ProtocolOpenAI,
-	}
-	ep, _ := routing.NewEndpoint(1, key, "gpt-4", 0)
 
 	usage := &message.Usage{
 		InputTokens:  100,
@@ -92,7 +84,7 @@ func TestRecordWithEndpoint(t *testing.T) {
 		IsAccurate:   true,
 	}
 
-	if !svc.RecordWithEndpoint(usage, ep, false) {
+	if !svc.Record(usage, false) {
 		t.Error("expected record to be queued")
 	}
 
@@ -106,16 +98,67 @@ func TestRecordWithEndpoint(t *testing.T) {
 	}
 }
 
-func TestRecordWithEndpointNilInputs(t *testing.T) {
+func TestRecordWithModel(t *testing.T) {
+	store := newMockStore()
+	svc := NewService(store)
+	defer svc.Close()
+
+	usage := &message.Usage{
+		InputTokens:  100,
+		OutputTokens: 50,
+		LatencyMs:    200,
+		IsAccurate:   true,
+	}
+
+	if !svc.RecordWithModel(usage, "gpt-4", false) {
+		t.Error("expected record to be queued")
+	}
+
+	// Wait for background writer with timeout
+	if !store.waitForRecord(100 * time.Millisecond) {
+		t.Error("timeout waiting for record to be written")
+	}
+
+	if count := store.getRecordCount(); count != 1 {
+		t.Errorf("expected 1 record, got %d", count)
+	}
+}
+
+func TestRecordWithModelAndProvider(t *testing.T) {
+	store := newMockStore()
+	svc := NewService(store)
+	defer svc.Close()
+
+	usage := &message.Usage{
+		InputTokens:  100,
+		OutputTokens: 50,
+		LatencyMs:    200,
+		IsAccurate:   true,
+	}
+
+	if !svc.RecordWithModelAndProvider(usage, "gpt-4", "https://api.openai.com", false) {
+		t.Error("expected record to be queued")
+	}
+
+	// Wait for background writer with timeout
+	if !store.waitForRecord(100 * time.Millisecond) {
+		t.Error("timeout waiting for record to be written")
+	}
+
+	if count := store.getRecordCount(); count != 1 {
+		t.Errorf("expected 1 record, got %d", count)
+	}
+}
+
+func TestRecordNilInputs(t *testing.T) {
 	store := newMockStore()
 	svc := NewService(store)
 	defer svc.Close()
 
 	// nil usage
-	svc.RecordWithEndpoint(nil, nil, false)
-
-	// nil endpoint
-	svc.RecordWithEndpoint(&message.Usage{}, nil, false)
+	svc.Record(nil, false)
+	svc.RecordWithModel(nil, "gpt-4", false)
+	svc.RecordWithModelAndProvider(nil, "gpt-4", "https://api.openai.com", false)
 
 	// Give a brief moment for any potential async processing
 	// No records should be written, so we just check count after brief delay
@@ -170,17 +213,10 @@ func (m *blockingStore) getRecordCount() int {
 	return len(m.records)
 }
 
-func TestRecordWithEndpointBufferFull(t *testing.T) {
+func TestRecordBufferFull(t *testing.T) {
 	store := newBlockingStore()
 	svc := NewService(store)
 	defer svc.Close()
-
-	key := &routing.Key{
-		BaseURL:  "https://api.example.com",
-		APIKey:   "test-key",
-		Protocol: routing.ProtocolOpenAI,
-	}
-	ep, _ := routing.NewEndpoint(1, key, "gpt-4", 0)
 
 	usage := &message.Usage{
 		InputTokens:  100,
@@ -190,7 +226,7 @@ func TestRecordWithEndpointBufferFull(t *testing.T) {
 	// Fill buffer beyond capacity (worker is blocked, so buffer will fill)
 	dropped := 0
 	for i := 0; i < recordBufferSize+100; i++ {
-		if !svc.RecordWithEndpoint(usage, ep, false) {
+		if !svc.Record(usage, false) {
 			dropped++
 		}
 	}

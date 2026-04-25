@@ -6,7 +6,7 @@ One config file. All your LLM APIs.
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
-[![Build](https://img.shields.io/github/actions/workflow/status/tokflux/tokrouter/ci.yml?style=flat-square)](https://github.com/tokflux/tokrouter/actions)
+[![Build](https://img.shields.io/github/actions/workflow/status/tokflux/tokrouter/release.yml?style=flat-square)](https://github.com/tokflux/tokrouter/actions)
 
 [中文文档](README_CN.md)
 
@@ -217,8 +217,9 @@ tokrouter serve
 │                                             │
 │              fluxcore (domain layer)        │
 │                                             │
-│  routing/           Endpoint + Pool         │
-│  call/              HTTP + Retry + Fallback │
+│  flux/              Client + UserEndpoint   │
+│  endpoint/          Global registry         │
+│  provider/          Provider abstraction    │
 │  message/           Request/Response IR     │
 │  translate/         Anthropic ↔ OpenAI      │
 │                                             │
@@ -240,29 +241,29 @@ type Service struct {
 }
 
 type serviceState struct {
-    modelPools map[string]*routing.EndpointPool  // Model -> EndpointPool
-    aliasMap   map[string]string                 // Model alias mapping
+    clients   map[string]*flux.Client  // Model -> flux.Client
+    aliasMap  map[string]string         // Model alias mapping
+    retryMax  int                       // Retry configuration
 }
 
-func NewService(endpoints []*routing.Endpoint, usageSvc *usage.Service, retryMax int) *Service {
-    // Build model pools - each model has its own endpoint pool
-    pools := buildModelPools(endpoints, retryMax)
+func NewService(userEndpoints []*flux.UserEndpoint, usageSvc *usage.Service, retryMax int) *Service {
+    // Build clients - each model has its own flux.Client
+    clients := buildClients(userEndpoints, retryMax)
     return &Service{
-        state: &serviceState{modelPools: pools, aliasMap: make(map[string]string)},
+        state:    &serviceState{clients: clients, aliasMap: make(map[string]string)},
         usageSvc: usageSvc,
     }
 }
 
-func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat string) ([]byte, *message.Usage, error) {
-    model := parseModelFromRequest(rawReq)
-    pool := s.getPool(model)  // Route to model-specific pool
-    resp, usage, err := call.Request(ctx, pool, rawReq, clientFormat)
-    s.usageSvc.Record(usage)  // Track cost
+func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat provider.Protocol) ([]byte, *message.Usage, error) {
+    client, model, providerURL, req, err := s.prepareRequestWithDetails(rawReq)
+    resp, usage, err := client.Do(ctx, req, clientFormat)
+    s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL)  // Track cost with provider
     return resp, usage, err
 }
 ```
 
-All routing logic (endpoint selection, retry, fallback) handled by fluxcore domain layer.
+All routing logic (endpoint selection, retry, fallback) handled by fluxcore's `flux.Client`.
 
 ---
 

@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/tokzone/fluxcore/call"
+	"github.com/tokzone/fluxcore/endpoint"
+	"github.com/tokzone/fluxcore/errors"
+	"github.com/tokzone/fluxcore/flux"
 	"github.com/tokzone/fluxcore/message"
-	"github.com/tokzone/fluxcore/routing"
+	"github.com/tokzone/fluxcore/provider"
 
 	"github.com/tokzone/tokrouter/config"
 	"github.com/tokzone/tokrouter/usage"
@@ -21,14 +23,14 @@ type Service struct {
 	state         *serviceState // Atomic state container
 	usageSvc      *usage.Service
 	healthLogger  *slog.Logger
-	lastHealthMap map[string]bool // Track last health state for change detection
 }
 
-// serviceState holds the mutable state of the service (swapped atomically on reload)
+// serviceState holds mutable state swapped atomically on reload.
 type serviceState struct {
-	modelPools map[string]*routing.EndpointPool // Model -> EndpointPool
-	aliasMap   map[string]string                // Model alias mapping (request model -> actual model)
-	cfg        *config.Config                   // Store config for ServerConfig extraction
+	clients   map[string]*flux.Client
+	aliasMap  map[string]string
+	cfg       *config.Config
+	retryMax  int
 }
 
 // ProviderStatus represents runtime status of a provider (separated from config)
@@ -45,36 +47,36 @@ type ModelStatus struct {
 	Healthy bool
 }
 
-// NewService creates a router service from loaded endpoints
-func NewService(endpoints []*routing.Endpoint, usageSvc *usage.Service, retryMax int) *Service {
+// NewService creates a router service from user endpoints
+func NewService(userEndpoints []*flux.UserEndpoint, usageSvc *usage.Service, retryMax int) *Service {
 	return &Service{
 		state: &serviceState{
-			modelPools: buildModelPools(endpoints, retryMax),
-			aliasMap:   make(map[string]string),
+			clients:  buildClients(userEndpoints, retryMax),
+			aliasMap: make(map[string]string),
+			retryMax: retryMax,
 		},
-		usageSvc:      usageSvc,
-		healthLogger:  slog.Default().With("component", "router"),
-		lastHealthMap: make(map[string]bool),
+		usageSvc:     usageSvc,
+		healthLogger: slog.Default().With("component", "router"),
 	}
 }
 
-// buildModelPools groups endpoints by model and creates a pool for each
-func buildModelPools(endpoints []*routing.Endpoint, retryMax int) map[string]*routing.EndpointPool {
-	modelEndpoints := make(map[string][]*routing.Endpoint)
-	for _, ep := range endpoints {
-		modelEndpoints[ep.Model] = append(modelEndpoints[ep.Model], ep)
+// buildClients groups user endpoints by model and creates a flux.Client for each.
+func buildClients(userEndpoints []*flux.UserEndpoint, retryMax int) map[string]*flux.Client {
+	modelEndpoints := make(map[string][]*flux.UserEndpoint)
+	for _, ue := range userEndpoints {
+		modelEndpoints[ue.Model()] = append(modelEndpoints[ue.Model()], ue)
 	}
 
-	pools := make(map[string]*routing.EndpointPool)
-	for model, eps := range modelEndpoints {
-		pools[model] = routing.NewEndpointPool(eps, retryMax)
+	clients := make(map[string]*flux.Client)
+	for model, ues := range modelEndpoints {
+		clients[model] = flux.NewClient(ues, flux.WithRetryMax(retryMax))
 	}
-	return pools
+	return clients
 }
 
 // NewServiceFromConfig creates a router service from config (factory method)
 func NewServiceFromConfig(cfg *config.Config) (*Service, error) {
-	endpoints := cfg.ToEndpoints()
+	userEndpoints := cfg.ToUserEndpoints()
 
 	var usageSvc *usage.Service
 	if cfg.Stats.Enabled {
@@ -85,7 +87,7 @@ func NewServiceFromConfig(cfg *config.Config) (*Service, error) {
 		usageSvc = usage.NewService(store)
 	}
 
-	svc := NewService(endpoints, usageSvc, cfg.Router.Retry.MaxRetries)
+	svc := NewService(userEndpoints, usageSvc, cfg.Router.Retry.MaxRetries)
 	svc.state.cfg = cfg
 
 	// Build alias map from config
@@ -113,59 +115,58 @@ func (s *Service) ServerConfig() config.ServerConfig {
 }
 
 // Forward forwards request to upstream provider (non-streaming)
-func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat routing.Protocol) ([]byte, *message.Usage, error) {
-	pool, epBefore, modifiedReq, err := s.prepareRequest(rawReq)
+func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat provider.Protocol) ([]byte, *message.Usage, error) {
+	client, model, providerURL, modifiedReq, err := s.prepareRequestWithDetails(rawReq)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	resp, usage, err := call.Request(ctx, pool, modifiedReq, clientFormat)
+	s.healthLogger.Debug("forward starting", "model", model, "provider", providerURL)
+
+	resp, usage, err := client.Do(ctx, modifiedReq, clientFormat)
 	if err != nil {
-		s.checkHealthChange(epBefore)
+		s.healthLogger.Error("forward failed", "model", model, "provider", providerURL, "error", err.Error())
 		return nil, nil, err
 	}
 
-	// Record usage
-	if s.usageSvc != nil {
-		ep := pool.CurrentEp()
-		s.usageSvc.RecordWithEndpoint(usage, ep, false) // ignore dropped status for non-streaming
+	// Record usage with provider info
+	if s.usageSvc != nil && usage != nil {
+		s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL, false)
 	}
 
 	return resp, usage, nil
 }
 
 // ForwardStream forwards request to upstream provider (streaming).
-// Returns the stream result and the pool (for usage recording after stream completes).
-func (s *Service) ForwardStream(ctx context.Context, rawReq []byte, clientFormat routing.Protocol) (*call.StreamResult, *routing.EndpointPool, error) {
-	pool, epBefore, modifiedReq, err := s.prepareRequest(rawReq)
+// Returns the stream result, model name, and provider URL (for usage recording after stream completes).
+func (s *Service) ForwardStream(ctx context.Context, rawReq []byte, clientFormat provider.Protocol) (*flux.StreamResult, string, string, error) {
+	client, model, providerURL, modifiedReq, err := s.prepareRequestWithDetails(rawReq)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", "", err
 	}
 
-	result, err := call.RequestStream(ctx, pool, modifiedReq, clientFormat)
+	s.healthLogger.Debug("forward stream starting", "model", model, "provider", providerURL)
+
+	result, err := client.DoStream(ctx, modifiedReq, clientFormat)
 	if err != nil {
-		s.checkHealthChange(epBefore)
-		return nil, nil, err
+		s.healthLogger.Error("forward stream failed", "model", model, "provider", providerURL, "error", err.Error())
+		return nil, "", "", err
 	}
 
-	return result, pool, nil
+	return result, model, providerURL, nil
 }
 
 // RecordStreamUsage records usage after stream completes
-func (s *Service) RecordStreamUsage(usage *message.Usage, pool *routing.EndpointPool) {
-	if s.usageSvc == nil || usage == nil || pool == nil {
+func (s *Service) RecordStreamUsage(usage *message.Usage, model string, providerURL string) {
+	if s.usageSvc == nil || usage == nil {
 		return
 	}
-	ep := pool.CurrentEp()
-	s.usageSvc.RecordWithEndpoint(usage, ep, true)
+	s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL, true)
 }
 
-// prepareRequest extracts model, gets pool, and applies alias mapping.
-// Returns pool, endpoint before request, modified request, and error.
-func (s *Service) prepareRequest(rawReq []byte) (*routing.EndpointPool, *routing.Endpoint, []byte, error) {
+func (s *Service) prepareRequestWithDetails(rawReq []byte) (*flux.Client, string, string, []byte, error) {
 	model := parseModelFromRequest(rawReq)
 
-	// Apply alias mapping
 	s.mu.RLock()
 	state := s.state
 	s.mu.RUnlock()
@@ -174,78 +175,53 @@ func (s *Service) prepareRequest(rawReq []byte) (*routing.EndpointPool, *routing
 		model = actualModel
 		rawReq = rewriteModelInRequest(rawReq, model)
 	}
-	pool, ok := state.modelPools[model]
+
+	client, ok := state.clients[model]
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("no endpoint for model: %s", model)
+		return nil, "", "", nil, errors.Wrap(errors.CodeNoEndpoint, fmt.Sprintf("no endpoint for model: %s", model), nil)
 	}
 
-	return pool, pool.CurrentEp(), rawReq, nil
+	ue := client.Next()
+	if ue == nil {
+		return nil, "", "", nil, errors.Wrap(errors.CodeNoEndpoint, fmt.Sprintf("no available endpoint for model: %s", model), nil)
+	}
+	providerURL := ue.BaseURL()
+
+	return client, model, providerURL, rawReq, nil
 }
 
-// checkHealthChange logs health state changes in real-time
-func (s *Service) checkHealthChange(ep *routing.Endpoint) {
-	if ep == nil || ep.Key == nil {
-		return
-	}
-
-	provider := ep.Key.BaseURL
-	model := ep.Model
-	key := provider + "/" + model
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Use IsCircuitBreakerOpen to determine health (circuit breaker open means unhealthy)
-	currentHealthy := !ep.IsCircuitBreakerOpen()
-	if lastHealthy, ok := s.lastHealthMap[key]; ok && lastHealthy != currentHealthy {
-		if currentHealthy {
-			s.healthLogger.Info("endpoint recovered", "provider", provider, "model", model)
-		} else {
-			s.healthLogger.Warn("endpoint became unhealthy", "provider", provider, "model", model)
-		}
-	}
-	s.lastHealthMap[key] = currentHealthy
-}
-
-// getPool returns the endpoint pool for a model
-func (s *Service) getPool(model string) (*routing.EndpointPool, bool) {
+func (s *Service) getClient(model string) (*flux.Client, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.state.modelPools == nil {
+	if s.state.clients == nil {
 		return nil, false
 	}
-	pool, ok := s.state.modelPools[model]
-	return pool, ok
+	client, ok := s.state.clients[model]
+	return client, ok
 }
 
-// ProviderStatuses returns runtime status of all providers
 func (s *Service) ProviderStatuses() []ProviderStatus {
-	s.mu.RLock()
-	state := s.state
-	s.mu.RUnlock()
+	endpoints := endpoint.GlobalRegistry().GetAll()
 
-	// Group by BaseURL (provider identifier)
 	providerMap := make(map[string]*ProviderStatus)
-	for _, pool := range state.modelPools {
-		ep := pool.CurrentEp()
-		if ep == nil || ep.Key == nil {
-			continue
-		}
-		providerKey := ep.Key.BaseURL
-		if _, ok := providerMap[providerKey]; !ok {
-			providerMap[providerKey] = &ProviderStatus{
+	for _, ep := range endpoints {
+		prov := ep.Provider()
+		providerKey := prov.BaseURL
+		pStatus, ok := providerMap[providerKey]
+		if !ok {
+			pStatus = &ProviderStatus{
 				Name:     providerKey,
-				Protocol: ep.Key.Protocol.String(),
+				Protocol: prov.Protocol.String(),
 			}
+			providerMap[providerKey] = pStatus
 		}
-		provider := providerMap[providerKey]
 		modelHealthy := !ep.IsCircuitBreakerOpen()
-		provider.Models = append(provider.Models, ModelStatus{
+		pStatus.Models = append(pStatus.Models, ModelStatus{
 			Name:    ep.Model,
 			Healthy: modelHealthy,
 		})
 		if modelHealthy {
-			provider.Healthy = true
+			pStatus.Healthy = true
 		}
 	}
 
@@ -265,7 +241,6 @@ func (s *Service) Stats(filter usage.QueryFilter) ([]usage.StatRow, error) {
 	return s.usageSvc.Query(filter)
 }
 
-// Close closes the router service
 func (s *Service) Close() error {
 	if s.usageSvc == nil {
 		return nil
@@ -273,40 +248,34 @@ func (s *Service) Close() error {
 	return s.usageSvc.Close()
 }
 
-// Reload reloads endpoints from config (for hot reload)
 func (s *Service) Reload(cfg *config.Config) error {
-	// Validate config before applying
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	endpoints := cfg.ToEndpoints()
+	endpoint.GlobalRegistry().Clear()
 
-	// Get retryMax from existing pool
+	userEndpoints := cfg.ToUserEndpoints()
+
 	s.mu.RLock()
-	retryMax := 2 // default
-	for _, pool := range s.state.modelPools {
-		retryMax = pool.RetryMax()
-		break
-	}
+	retryMax := s.state.retryMax
 	s.mu.RUnlock()
 
-	// Create new state (atomic swap)
 	newState := &serviceState{
-		cfg:        cfg,
-		aliasMap:   cfg.AliasMap(),
-		modelPools: buildModelPools(endpoints, retryMax),
+		cfg:      cfg,
+		aliasMap: cfg.AliasMap(),
+		clients:  buildClients(userEndpoints, retryMax),
+		retryMax: retryMax,
 	}
 
 	s.mu.Lock()
 	s.state = newState
 	s.mu.Unlock()
 
-	s.healthLogger.Info("config reloaded", "models", len(newState.modelPools))
+	s.healthLogger.Info("config reloaded", "models", len(newState.clients))
 	return nil
 }
 
-// parseModelFromRequest extracts model field from raw JSON request
 func parseModelFromRequest(rawReq []byte) string {
 	var req struct {
 		Model string `json:"model"`
@@ -317,7 +286,6 @@ func parseModelFromRequest(rawReq []byte) string {
 	return req.Model
 }
 
-// rewriteModelInRequest rewrites the model field in raw JSON request
 func rewriteModelInRequest(rawReq []byte, newModel string) []byte {
 	var req map[string]interface{}
 	if err := json.Unmarshal(rawReq, &req); err != nil {

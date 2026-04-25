@@ -1,18 +1,18 @@
 // Package router provides the core routing service for tokrouter.
 //
-// The Service struct coordinates fluxcore's EndpointPool for request forwarding
+// The Service struct coordinates flux.Client for request forwarding
 // and usage tracking for cost statistics. It implements:
 //   - Request forwarding (Forward, ForwardStream)
 //   - Provider status tracking (ProviderStatuses)
 //   - Circuit breaker health detection
 //   - Hot reload via atomic state swapping (Reload)
 //
-// The service maintains model-specific endpoint pools and selects endpoints based on:
+// The service maintains model-specific flux.Client instances and selects targets based on:
 //  1. Priority (lower = preferred) - initial selection
 //  2. EWMA latency - runtime adjustment
 //
 // The service is created from config using NewServiceFromConfig, which initializes
-// the endpoint pool and optional usage tracking.
+// the clients and optional usage tracking.
 //
 // Basic usage:
 //
@@ -23,7 +23,7 @@
 //	defer svc.Close()
 //
 //	// Forward a request
-//	resp, usage, err := svc.Forward(ctx, body, routing.ProtocolOpenAI)
+//	resp, usage, err := svc.Forward(ctx, body, provider.ProtocolOpenAI)
 //
 //	// Hot reload config
 //	if err := svc.Reload(newCfg); err != nil {

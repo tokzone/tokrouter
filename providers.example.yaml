@@ -1,0 +1,36 @@
+# Custom provider presets example
+#
+# Place this file as "providers.yaml" next to your config.yaml
+# to add or override provider presets.
+#
+# User-defined presets override built-in presets with the same name.
+
+providers:
+  # Example: Add a custom/small provider
+  my-custom-api:
+    display_name: "My Custom API"
+    base_url: "https://my-custom.api.com/v1"
+    format: openai
+    models:
+      - name: my-model-v1
+        alias: v1
+      - name: my-model-v2
+        alias: v2
+    doc_url: "https://my-custom.api.com/docs"
+    region: global
+
+  # Example: Override built-in preset (add more models)
+  openai:
+    display_name: "OpenAI (Custom)"
+    base_url: "https://api.openai.com/v1"
+    format: openai
+    models:
+      - name: gpt-4o
+        alias: 4o
+      - name: gpt-4o-mini
+        alias: mini
+      # Add custom fine-tuned model
+      - name: ft:gpt-4o:my-org:custom-model
+        alias: custom
+    doc_url: "https://platform.openai.com/api-keys"
+    region: global

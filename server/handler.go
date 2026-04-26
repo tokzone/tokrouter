@@ -25,7 +25,7 @@ const TraceIDKey ctxKey = "trace_id"
 const MaxRequestBodySize = 10 * 1024 * 1024
 
 // HandleRequest handles all requests using fluxcore
-func HandleRequest(routerSvc *router.Service, clientFormat provider.Protocol) http.HandlerFunc {
+func HandleRequest(routerSvc router.RouterService, clientFormat provider.Protocol) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Read request body with size limit
 		body, err := io.ReadAll(io.LimitReader(r.Body, MaxRequestBodySize))
@@ -56,8 +56,8 @@ func HandleRequest(routerSvc *router.Service, clientFormat provider.Protocol) ht
 }
 
 // handleStreaming handles streaming requests
-func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.Service, body []byte, clientFormat provider.Protocol, model string) {
-	result, actualModel, providerURL, err := routerSvc.ForwardStream(r.Context(), body, clientFormat)
+func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc router.RouterService, body []byte, clientFormat provider.Protocol, model string) {
+	result, actualModel, providerURL, err := routerSvc.ForwardStream(r.Context(), body, model, clientFormat)
 	if err != nil {
 		WriteErrorResponse(w, http.StatusServiceUnavailable, NewErrorResponseWithCode(ErrCodeUpstreamFailed, err.Error()))
 		Warn("proxy stream failed", map[string]interface{}{
@@ -100,8 +100,8 @@ func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.S
 }
 
 // handleNonStreaming handles non-streaming requests
-func handleNonStreaming(w http.ResponseWriter, r *http.Request, routerSvc *router.Service, body []byte, clientFormat provider.Protocol, model string) {
-	resp, usage, err := routerSvc.Forward(r.Context(), body, clientFormat)
+func handleNonStreaming(w http.ResponseWriter, r *http.Request, routerSvc router.RouterService, body []byte, clientFormat provider.Protocol, model string) {
+	resp, usage, err := routerSvc.Forward(r.Context(), body, model, clientFormat)
 	if err != nil {
 		WriteErrorResponse(w, http.StatusServiceUnavailable, NewErrorResponseWithCode(ErrCodeUpstreamFailed, err.Error()))
 		Error("proxy failed", map[string]interface{}{
@@ -124,7 +124,7 @@ func handleNonStreaming(w http.ResponseWriter, r *http.Request, routerSvc *route
 }
 
 // HandleStatus handles status endpoint
-func HandleStatus(routerSvc *router.Service) http.HandlerFunc {
+func HandleStatus(routerSvc router.RouterService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var statuses []router.ProviderStatus
 		if routerSvc != nil {
@@ -136,7 +136,7 @@ func HandleStatus(routerSvc *router.Service) http.HandlerFunc {
 }
 
 // HandleHealth handles health endpoint with dependency checks
-func HandleHealth(routerSvc *router.Service) http.HandlerFunc {
+func HandleHealth(routerSvc router.RouterService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		status := "ok"
 		details := make(map[string]interface{})
@@ -181,7 +181,7 @@ func HandleHealth(routerSvc *router.Service) http.HandlerFunc {
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status":  status,
-			"version": "v0.6.0",
+			"version": "v0.7.0",
 			"details": details,
 		})
 	}

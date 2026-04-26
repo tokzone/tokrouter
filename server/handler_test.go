@@ -21,7 +21,7 @@ func setupTestRouterService() *router.Service {
 	endpoint.RegisterEndpoint(1, prov, "gpt-4")
 	k, _ := flux.NewAPIKey(prov, "test-key")
 	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
-	return router.NewService([]*flux.UserEndpoint{ue}, nil, 2)
+	return router.NewService([]*flux.UserEndpoint{ue}, nil, 2, nil)
 }
 
 func TestHandleHealth(t *testing.T) {
@@ -79,7 +79,7 @@ func TestHandleHealthDegraded(t *testing.T) {
 
 	k, _ := flux.NewAPIKey(prov, "test-key")
 	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
-	svc := router.NewService([]*flux.UserEndpoint{ue}, nil, 2)
+	svc := router.NewService([]*flux.UserEndpoint{ue}, nil, 2, nil)
 	defer svc.Close()
 
 	handler := HandleHealth(svc)

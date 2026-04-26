@@ -20,13 +20,13 @@ import (
 type Server struct {
 	cfg        config.ServerConfig
 	traceCfg   config.TraceConfig
-	router     *router.Service
+	router     router.RouterService
 	server     *http.Server
 	configPath string
 }
 
 // NewServer creates a new HTTP server
-func NewServer(routerSvc *router.Service, traceCfg config.TraceConfig, configPath string) *Server {
+func NewServer(routerSvc router.RouterService, traceCfg config.TraceConfig, configPath string) *Server {
 	cfg := routerSvc.ServerConfig()
 	mux := http.NewServeMux()
 
@@ -39,6 +39,11 @@ func NewServer(routerSvc *router.Service, traceCfg config.TraceConfig, configPat
 	mux.HandleFunc("/v1/messages", traceMiddleware(HandleRequest(routerSvc, provider.ProtocolAnthropic)))
 	mux.HandleFunc("/status", traceMiddleware(HandleStatus(routerSvc)))
 	mux.HandleFunc("/health", traceMiddleware(HandleHealth(routerSvc)))
+
+	// OpenAPI documentation endpoints
+	mux.HandleFunc("/openapi.yaml", HandleOpenAPISpec)
+	mux.HandleFunc("/docs", HandleSwaggerUI)
+	mux.HandleFunc("/docs/", HandleSwaggerUI)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),

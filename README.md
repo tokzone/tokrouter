@@ -7,6 +7,7 @@ One config file. All your LLM APIs.
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/tokflux/tokrouter/release.yml?style=flat-square)](https://github.com/tokflux/tokrouter/actions)
+[![Version](https://img.shields.io/badge/Version-v0.7.0-blue?style=flat-square)]()
 
 [中文文档](README_CN.md)
 
@@ -15,20 +16,20 @@ One config file. All your LLM APIs.
 ## 4 Lines to Production
 
 ```yaml
-# config.yaml
+# config.yaml - Simplified with preset
 keys:
-  - name: openai-main
-    base_url: "https://api.openai.com/v1"
-    format: openai
+  - provider: openai
     secret: "${OPENAI_API_KEY}"
-    enabled: true
-    models:
-      - name: gpt-4
 
 # Start
 tokrouter serve
 # Your gateway is ready at http://127.0.0.1:8765
 ```
+
+**Provider Presets** — Just specify `provider` and `secret`, everything else auto-filled:
+- International: openai, anthropic, google, mistral, cohere, groq, deepseek
+- Chinese: zhipu, qwen, tencent, baidu, moonshot, minimax, siliconflow, yi...
+- Platforms: together, replicate, openrouter
 
 ---
 
@@ -159,30 +160,29 @@ docker run -d \
 ## Quick Start
 
 ```bash
+# Install
 git clone https://github.com/tokflux/tokrouter.git
 cd tokrouter
 go build ./cmd/tokrouter
 
+# Simplified config with presets
 cat > config.yaml << 'EOF'
 keys:
-  - name: openai-main
-    base_url: "https://api.openai.com/v1"
-    format: openai
+  - provider: openai
     secret: "${OPENAI_API_KEY}"
-    enabled: true
-    models:
-      - name: gpt-4
-      - name: gpt-3.5-turbo
-
-  - name: anthropic-main
-    base_url: "https://api.anthropic.com/v1"
-    format: anthropic
+  - provider: anthropic
     secret: "${ANTHROPIC_API_KEY}"
-    enabled: true
-    models:
-      - name: claude-3-opus
+  - provider: deepseek
+    secret: "${DEEPSEEK_API_KEY}"
 EOF
 
+tokrouter serve
+```
+
+**Or use interactive init:**
+
+```bash
+tokrouter init  # Interactive configuration wizard
 tokrouter serve
 ```
 
@@ -376,26 +376,36 @@ anthropic-main 23456      12345     567        189ms        99.2%
 ## CLI Commands
 
 ```bash
-tokrouter init                       # Interactive configuration (with validation and confirmation)
+tokrouter init                       # Interactive configuration wizard
 tokrouter serve                      # Start server (127.0.0.1:8765)
 tokrouter serve --host 0.0.0.0       # Listen on all interfaces
-tokrouter serve --port 9000          # Custom port
+
+# New: Service management
+tokrouter add <provider>             # Add service with preset (interactive)
+tokrouter list services              # List all configured services
+tokrouter list assistants            # List supported AI assistants
+tokrouter show <service>             # Show service details
+tokrouter remove <service>           # Remove a service
+tokrouter start                      # Start tokrouter daemon
+tokrouter stop                       # Stop tokrouter daemon
+
+# New: Configuration
+tokrouter config service <name> --enable/--disable/--secret/--add-model/--remove-model
+tokrouter config assistant <name>    # Configure AI assistant to use tokrouter
+tokrouter config assistant --auto    # Auto-configure all installed assistants
+
+# Status & monitoring
 tokrouter status                     # Show key status
 tokrouter status --watch             # Real-time refresh
 tokrouter models                     # List all available models
-tokrouter keys                       # List all keys
-tokrouter keys add                   # Add a new key (interactive mode)
-tokrouter keys add --name ...        # Add key with flags (non-interactive)
-tokrouter keys remove <name>         # Remove a key
-tokrouter keys enable <name>         # Enable a key
-tokrouter keys disable <name>        # Disable a key
-tokrouter keys ping <name>           # Test connectivity (shows latency and summary)
-tokrouter summary --month            # Monthly statistics (with avg latency & success rate)
-tokrouter summary --today            # Today's usage
+tokrouter keys                       # List all keys (legacy)
+tokrouter keys ping <name>           # Test connectivity
+tokrouter summary --month            # Monthly statistics
 tokrouter summary --chart            # ASCII bar chart
-tokrouter summary --export csv       # Export as CSV
-tokrouter summary --export json      # Export as JSON
-tokrouter config                     # Show configuration
+
+# OpenAPI documentation (new)
+curl http://localhost:8765/openapi.yaml  # OpenAPI spec
+curl http://localhost:8765/docs          # Swagger UI
 ```
 
 ---
@@ -408,6 +418,8 @@ tokrouter config                     # Show configuration
 | `POST /v1/messages` | Anthropic | Anthropic compatible, streaming supported |
 | `GET /status` | JSON | Key status |
 | `GET /health` | JSON | Health check with dependency status |
+| `GET /openapi.yaml` | YAML | OpenAPI 3.0 specification |
+| `GET /docs` | HTML | Swagger UI documentation |
 
 ---
 

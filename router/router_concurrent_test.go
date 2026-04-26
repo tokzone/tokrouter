@@ -113,7 +113,7 @@ func TestReloadPreservesRetryMax(t *testing.T) {
 	endpoint.RegisterEndpoint(1, prov, "gpt-4")
 	k := newTestAPIKey(prov)
 	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
-	svc := NewService([]*flux.UserEndpoint{ue}, nil, 5)
+	svc := NewService([]*flux.UserEndpoint{ue}, nil, 5, nil)
 
 	cfg := &config.Config{
 		Keys: []config.KeyConfig{

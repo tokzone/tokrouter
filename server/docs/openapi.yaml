@@ -1,0 +1,378 @@
+openapi: 3.0.3
+info:
+  title: tokrouter API
+  description: |
+    LLM API Gateway and Router.
+
+    tokrouter provides a unified interface for multiple LLM providers with:
+    - Protocol conversion (OpenAI ↔ Anthropic)
+    - Automatic fallback and retry
+    - Circuit breaker for endpoint health
+    - Cost tracking and usage statistics
+
+    Configure providers in config.yaml and start with `tokrouter serve`.
+  version: 0.7.0
+  contact:
+    name: tokrouter
+    url: https://github.com/tokflux/tokrouter
+
+servers:
+  - url: http://127.0.0.1:8765
+    description: Local development server
+
+paths:
+  /v1/chat/completions:
+    post:
+      summary: Chat Completion (OpenAI format)
+      description: |
+        Send a chat completion request. Supports both streaming and non-streaming modes.
+        Requests are forwarded to configured providers with automatic protocol conversion.
+      operationId: chatCompletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+            examples:
+              basic:
+                summary: Basic request
+                value:
+                  model: gpt-4o
+                  messages:
+                    - role: user
+                      content: Hello!
+              streaming:
+                summary: Streaming request
+                value:
+                  model: gpt-4o
+                  messages:
+                    - role: user
+                      content: Hello!
+                  stream: true
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream of completion chunks
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Upstream error or no available endpoints
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/messages:
+    post:
+      summary: Messages (Anthropic format)
+      description: |
+        Send a message request using Anthropic's API format.
+        Requests are forwarded to configured providers with automatic protocol conversion.
+      operationId: messages
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessagesRequest'
+            examples:
+              basic:
+                summary: Basic request
+                value:
+                  model: claude-3-5-sonnet-20241022
+                  max_tokens: 1024
+                  messages:
+                    - role: user
+                      content: Hello!
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagesResponse'
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream of message chunks
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Upstream error or no available endpoints
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /health:
+    get:
+      summary: Health check
+      description: Returns service health status including endpoint availability
+      operationId: health
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service is degraded (no healthy endpoints)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /status:
+    get:
+      summary: Provider status
+      description: Returns status of all configured providers and their models
+      operationId: status
+      responses:
+        '200':
+          description: Provider status list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProviderStatus'
+
+components:
+  schemas:
+    ChatCompletionRequest:
+      type: object
+      required:
+        - model
+        - messages
+      properties:
+        model:
+          type: string
+          description: Model name or alias
+          example: gpt-4o
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+          description: Conversation messages
+        stream:
+          type: boolean
+          default: false
+          description: Enable streaming response
+        max_tokens:
+          type: integer
+          description: Maximum tokens in response
+        temperature:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 2
+          description: Sampling temperature
+        top_p:
+          type: number
+          format: float
+          description: Top-p sampling
+
+    ChatMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+          description: Message role
+        content:
+          type: string
+          description: Message content
+        name:
+          type: string
+          description: Optional name for the participant
+
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Response ID
+        object:
+          type: string
+          example: chat.completion
+        created:
+          type: integer
+          format: int64
+          description: Creation timestamp
+        model:
+          type: string
+          description: Model used
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: '#/components/schemas/ChatMessage'
+              finish_reason:
+                type: string
+        usage:
+          $ref: '#/components/schemas/Usage'
+
+    MessagesRequest:
+      type: object
+      required:
+        - model
+        - max_tokens
+        - messages
+      properties:
+        model:
+          type: string
+          description: Model name
+          example: claude-3-5-sonnet-20241022
+        max_tokens:
+          type: integer
+          description: Maximum tokens in response
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum: [user, assistant]
+              content:
+                type: string
+        system:
+          type: string
+          description: System prompt
+        stream:
+          type: boolean
+          default: false
+
+    MessagesResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          example: message
+        role:
+          type: string
+          example: assistant
+        content:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              text:
+                type: string
+        model:
+          type: string
+        stop_reason:
+          type: string
+        usage:
+          $ref: '#/components/schemas/Usage'
+
+    Usage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+          description: Input tokens used
+        completion_tokens:
+          type: integer
+          description: Output tokens generated
+        total_tokens:
+          type: integer
+          description: Total tokens
+
+    Error:
+      type: object
+      properties:
+        type:
+          type: string
+          example: error
+        code:
+          type: string
+          description: Error code
+          enum:
+            - INVALID_REQUEST
+            - UPSTREAM_FAILED
+            - RATE_LIMITED
+            - INTERNAL_ERROR
+        message:
+          type: string
+          description: Error message
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+          description: Overall health status
+        version:
+          type: string
+          description: Service version
+        details:
+          type: object
+          properties:
+            endpoints:
+              type: object
+              properties:
+                total:
+                  type: integer
+                healthy:
+                  type: integer
+            usage:
+              type: string
+              description: Usage service status
+
+    ProviderStatus:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Provider base URL
+        protocol:
+          type: string
+          description: Protocol format
+        healthy:
+          type: boolean
+          description: Overall health status
+        models:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              healthy:
+                type: boolean

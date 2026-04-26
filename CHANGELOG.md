@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-04-26
+
+### Added
+- **RouterService interface**: Abstract router operations for testing and extensibility
+  - `MockRouterService` implementation for unit tests
+- **Provider presets**: Simplified configuration with preset providers
+  - 20+ presets: openai, anthropic, deepseek, qwen, zhipu, moonshot, etc.
+  - Just specify `provider` and `secret`, other fields auto-filled
+- **HTTP client configuration**: Optional `http` config section
+  - Customize timeout, connection pool settings
+- **Rate limiting middleware**: Global + per-provider rate limiting (not yet enabled)
+- **OpenAPI documentation**: `/openapi.yaml` and `/docs` endpoints
+- **CLI improvements**: 
+  - `tr config service <name>` - configure service settings
+  - `tr config assistant <name>` - configure AI assistants to use tokrouter
+  - `tr config assistant --auto` - auto-detect and configure installed assistants
+  - `tr add <provider>` - add service with preset
+  - `tr list services/assistants` - list configured items
+  - `tr show <service>` - show service details
+  - `tr start/stop` - manage tokrouter daemon
+
+### Changed
+- **RouterService interface signature**: `Forward`/`ForwardStream` now accept `model string` parameter
+  - Eliminates redundant JSON parsing (was 3x, now max 2x)
+- **Version**: Updated to v0.7.0
+
+### Migration Guide (v0.6.0 → v0.7.0)
+
+```yaml
+# Before (v0.6.0)
+keys:
+  - name: openai-main
+    base_url: "https://api.openai.com/v1"
+    format: openai
+    secret: "${OPENAI_API_KEY}"
+    enabled: true
+    models:
+      - name: gpt-4
+
+# After (v0.7.0) - Simplified with preset
+keys:
+  - provider: openai
+    secret: "${OPENAI_API_KEY}"
+    # models auto-filled: gpt-4o, gpt-4o-mini, gpt-4-turbo, o1, o3-mini...
+
+# Traditional config still works (backward compatible)
+```
+
 ## [0.6.0] - 2026-04-24
 
 ### Added

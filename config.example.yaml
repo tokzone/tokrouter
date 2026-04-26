@@ -1,51 +1,79 @@
-# tokrouter configuration - minimal example
-# Only required fields are shown. All other settings have defaults.
+# tokrouter configuration example
+#
+# Two ways to configure:
+# 1. Simplified (recommended): Use preset provider, only need secret
+# 2. Traditional: Full config with name, base_url, format, models
 
-# Keys configuration (required - at least one key)
+# ===== Simplified Config (Recommended) =====
+# Just specify provider and secret - base_url, format, models are auto-filled!
 keys:
-  - name: openai-main
-    base_url: "https://api.openai.com/v1"
-    format: openai
-    secret: "${OPENAI_API_KEY}"  # Use env var or paste key directly
-    enabled: true
-    models:
-      - name: gpt-4
-        # priority: optional, lower = preferred. Default 0.
-        priority: 100
-      - name: gpt-3.5-turbo
-        # No priority = default 0 (highest)
+  # International providers
+  - provider: openai
+    secret: "${OPENAI_API_KEY}"
+    # models: auto-filled (gpt-4o, gpt-4o-mini, gpt-4-turbo, o1, o3-mini...)
 
-  - name: anthropic-main
-    base_url: "https://api.anthropic.com/v1"
-    format: anthropic
+  - provider: anthropic
     secret: "${ANTHROPIC_API_KEY}"
-    enabled: true
-    models:
-      - name: claude-3-opus
-      - name: claude-3-sonnet
+    # models: auto-filled (claude-3.5-sonnet, claude-3.5-haiku, claude-3-opus...)
 
-# Optional: Override defaults below
-# All these sections have sensible defaults, only include if you need to customize.
+  - provider: deepseek
+    secret: "${DEEPSEEK_API_KEY}"
+    # models: auto-filled (deepseek-chat, deepseek-coder, deepseek-reasoner)
 
+  # Chinese providers
+  - provider: qwen
+    secret: "${QWEN_API_KEY}"
+    # models: auto-filled (qwen-max, qwen-plus, qwen-turbo, qwen-coder...)
+
+  - provider: zhipu
+    secret: "${ZHIPU_API_KEY}"
+    # models: auto-filled (glm-4-plus, glm-4-flash, glm-4-long...)
+
+  - provider: moonshot
+    secret: "${MOONSHOT_API_KEY}"
+    # models: auto-filled (moonshot-v1-8k, moonshot-v1-32k, moonshot-v1-128k)
+
+# ===== Optional: Override preset defaults =====
+# You can still customize models even with preset:
+# keys:
+#   - provider: openai
+#     secret: "sk-xxx"
+#     models:
+#       - name: gpt-4o  # only use this model
+#         alias: 4o     # short alias
+
+# ===== Traditional Config (Backward Compatible) =====
+# If you need a custom provider not in presets:
+# keys:
+#   - name: my-custom-service
+#     base_url: "https://custom.api.com/v1"
+#     format: openai
+#     secret: "xxx"
+#     models:
+#       - name: custom-model
+
+# ===== Available Presets =====
+# International: openai, anthropic, google, mistral, cohere, groq, deepseek
+# Chinese: zhipu, qwen, tencent, baidu, qianfan, huawei, moonshot,
+#          minimax, siliconflow, yi, stepfun, baichuan, xunfei, doubao, parallel
+# Platforms: together, replicate, openrouter
+
+# ===== Optional Server Settings =====
 # server:
-#   host: "127.0.0.1"  # default: 127.0.0.1
+#   host: "127.0.0.1"  # default: 127.0.0.1 (localhost only)
 #   port: 8765         # default: 8765
 
 # router:
 #   retry:
-#     max_retries: 2    # default: 2
-#     timeout: "30s"    # default: 30s
-#     backoff: "exponential"  # default: exponential
+#     max_retries: 2
+#     timeout: "30s"
+#     backoff: "exponential"
 
 # stats:
-#   enabled: true       # default: true
-#   db_path: "./data/usage.db"  # default: ./data/usage.db
+#   enabled: true
+#   db_path: "./data/usage.db"
 
 # log:
-#   level: "info"       # default: info (debug/info/warn/error)
-#   format: "json"      # default: json (json/text)
-#   output: "stdout"    # default: stdout
-
-# trace:
-#   enabled: true       # default: true
-#   header: "x-request-id"  # default: x-request-id
+#   level: "info"      # debug/info/warn/error
+#   format: "json"     # json/text
+#   output: "stdout"

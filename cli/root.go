@@ -8,13 +8,14 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-var version = "v0.6.0"
+var version = "v0.7.0"
 
 // Execute runs the CLI
 func Execute() {
 	app := &cli.Command{
 		Name:    "tokrouter",
-		Usage:   "LLM API Router (Personal)",
+		Aliases: []string{"tr"},
+		Usage:   "LLM API Router - route API requests to multiple providers",
 		Version: version,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -26,12 +27,18 @@ func Execute() {
 		},
 		Commands: []*cli.Command{
 			initCmd,
+			addCmd,
+			removeCmd,
+			listCmd,
+			showCmd,
+			configCmd,
+			startCmd,
+			stopCmd,
+			// Legacy commands (kept for backward compatibility)
 			serveCmd,
-			statusCmd,
 			keysCmd,
 			modelsCmd,
 			summaryCmd,
-			configCmd,
 		},
 	}
 

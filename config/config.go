@@ -16,12 +16,14 @@ import (
 
 // Config is the main configuration structure
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	Keys   []KeyConfig  `mapstructure:"keys"`
-	Router RouterConfig `mapstructure:"router"`
-	Stats  StatsConfig  `mapstructure:"stats"`
-	Log    LogConfig    `mapstructure:"log"`
-	Trace  TraceConfig  `mapstructure:"trace"`
+	Server    ServerConfig    `mapstructure:"server"`
+	Keys      []KeyConfig     `mapstructure:"keys"`
+	Router    RouterConfig    `mapstructure:"router"`
+	Stats     StatsConfig     `mapstructure:"stats"`
+	Log       LogConfig       `mapstructure:"log"`
+	Trace     TraceConfig     `mapstructure:"trace"`
+	HTTP      HTTPConfig      `mapstructure:"http"`      // Optional HTTP client configuration
+	RateLimit RateLimitConfig `mapstructure:"rate_limit"` // Optional rate limiting configuration
 }
 
 // ServerConfig holds server configuration
@@ -33,8 +35,33 @@ type ServerConfig struct {
 	LogLevel string `mapstructure:"log_level"` // Optional, defaults to log.level
 }
 
+// HTTPConfig holds HTTP client configuration (optional)
+type HTTPConfig struct {
+	Timeout            string `mapstructure:"timeout"`             // e.g., "30s"
+	MaxIdleConns       int    `mapstructure:"max_idle_conns"`      // default: 100
+	MaxIdleConnsPerHost int   `mapstructure:"max_idle_conns_per_host"` // default: 10
+	IdleConnTimeout    string `mapstructure:"idle_conn_timeout"`   // e.g., "90s"
+}
+
+// RateLimitConfig holds rate limiting configuration (optional)
+type RateLimitConfig struct {
+	Enabled     bool               `mapstructure:"enabled"`
+	Global      RateLimitSettings  `mapstructure:"global"`
+	PerProvider RateLimitSettings  `mapstructure:"per_provider"`
+}
+
+// RateLimitSettings holds rate limit settings for a scope
+type RateLimitSettings struct {
+	RequestsPerSecond int `mapstructure:"requests_per_second"` // RPS limit
+	Burst             int `mapstructure:"burst"`               // Burst allowance
+}
+
 // KeyConfig holds API key configuration (immutable config, no runtime state)
 type KeyConfig struct {
+	// Preset provider identifier (optional, enables simplified config)
+	Provider string `mapstructure:"provider"`
+
+	// Traditional fields (required when Provider is not set)
 	Name    string        `mapstructure:"name"`
 	BaseURL string        `mapstructure:"base_url"`
 	Format  string        `mapstructure:"format"` // "openai", "anthropic", "gemini", "cohere"
@@ -51,6 +78,36 @@ func (k *KeyConfig) Protocol() provider.Protocol {
 		return provider.ProtocolOpenAI // explicit fallback
 	}
 	return p
+}
+
+// HasModel returns true if the key has a model with the given name.
+func (k *KeyConfig) HasModel(name string) bool {
+	for _, m := range k.Models {
+		if m.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// AddModel adds a model with the given name. Returns true if added.
+func (k *KeyConfig) AddModel(name string) bool {
+	if k.HasModel(name) {
+		return false
+	}
+	k.Models = append(k.Models, ModelConfig{Name: name})
+	return true
+}
+
+// RemoveModel removes a model with the given name. Returns true if removed.
+func (k *KeyConfig) RemoveModel(name string) bool {
+	for i, m := range k.Models {
+		if m.Name == name {
+			k.Models = append(k.Models[:i], k.Models[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // ModelConfig holds model configuration
@@ -128,9 +185,12 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
-	// Expand environment variables in secrets
+	// Expand environment variables and apply presets
 	for i := range cfg.Keys {
 		cfg.Keys[i].Secret = expandEnv(cfg.Keys[i].Secret, cfg.Keys[i].Name)
+		if err := applyPreset(&cfg.Keys[i], i); err != nil {
+			return nil, err
+		}
 	}
 
 	// Resolve relative paths based on config file directory
@@ -161,6 +221,19 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("trace.enabled", true)
 	v.SetDefault("trace.header", "x-request-id")
+
+	// HTTP client defaults (optional, match fluxcore defaults)
+	v.SetDefault("http.timeout", "30s")
+	v.SetDefault("http.max_idle_conns", 100)
+	v.SetDefault("http.max_idle_conns_per_host", 10)
+	v.SetDefault("http.idle_conn_timeout", "90s")
+
+	// Rate limit defaults (disabled by default)
+	v.SetDefault("rate_limit.enabled", false)
+	v.SetDefault("rate_limit.global.requests_per_second", 100)
+	v.SetDefault("rate_limit.global.burst", 20)
+	v.SetDefault("rate_limit.per_provider.requests_per_second", 30)
+	v.SetDefault("rate_limit.per_provider.burst", 10)
 }
 
 // resolvePaths resolves relative paths to absolute paths based on config file directory
@@ -206,42 +279,51 @@ Suggestion: Add at least one key in config.yaml:
 	for i, k := range c.Keys {
 		if k.Enabled {
 			keyPath := fmt.Sprintf("keys[%d] (%q)", i, k.Name)
-			if k.Name == "" {
-				return fmt.Errorf(`%s: missing required field 'name'
 
-Suggestion: Add a name for this key in config.yaml:
-  keys:
-    - name: my-key-name  # required
-      ...`, keyPath)
-			}
+			// Secret is always required
 			if k.Secret == "" {
 				return fmt.Errorf(`%s: missing required field 'secret'
 
 Suggestion: Add your API key in config.yaml:
   keys:
-    - name: %s
-      secret: "sk-..."  # or use "${OPENAI_API_KEY}"
-      ...`, keyPath, k.Name)
+    - provider: %s
+      secret: "sk-..."
+      ...`, keyPath, k.Provider)
 			}
-			if k.BaseURL == "" {
-				return fmt.Errorf(`%s: missing required field 'base_url'
+
+			// If using preset mode, fields are already filled by applyPreset
+			// If using traditional mode, validate required fields
+			if k.Provider == "" {
+				if k.Name == "" {
+					return fmt.Errorf(`%s: missing required field 'name'
+
+Suggestion: Add a name for this key in config.yaml:
+  keys:
+    - name: my-key-name  # required
+      ...`, keyPath)
+				}
+				if k.BaseURL == "" {
+					return fmt.Errorf(`%s: missing required field 'base_url'
 
 Suggestion: Add the API base URL in config.yaml:
   keys:
     - name: %s
       base_url: "https://api.openai.com/v1"
       ...`, keyPath, k.Name)
-			}
-			if k.Format == "" {
-				return fmt.Errorf(`%s: missing required field 'format'
+				}
+				if k.Format == "" {
+					return fmt.Errorf(`%s: missing required field 'format'
 
 Suggestion: Add the format in config.yaml:
   keys:
     - name: %s
       format: openai  # one of: openai, anthropic, gemini, cohere
       ...`, keyPath, k.Name)
+				}
 			}
-			if !isValidProtocol(k.Format) {
+
+			// Validate format if set
+			if k.Format != "" && !isValidProtocol(k.Format) {
 				return fmt.Errorf(`%s: invalid format %q
 
 Suggestion: Use one of the supported formats:
@@ -250,15 +332,16 @@ Suggestion: Use one of the supported formats:
   - gemini
   - cohere`, keyPath, k.Format)
 			}
+
+			// Models should be populated by preset or user
 			if len(k.Models) == 0 {
 				return fmt.Errorf(`%s: no models configured
 
-Suggestion: Add at least one model in config.yaml:
+Suggestion: Use a preset provider:
   keys:
-    - name: %s
-      models:
-        - name: gpt-4
-          priority: 0`, keyPath, k.Name)
+    - provider: openai
+      secret: "sk-..."
+      # models are auto-filled from preset`, keyPath)
 			}
 			for j, m := range k.Models {
 				if m.Name == "" {
@@ -460,4 +543,44 @@ func Save(configPath string, cfg *Config) error {
 	v.Set("keys", keys)
 
 	return v.WriteConfig()
+}
+
+// applyPreset fills in missing fields from a provider preset.
+// If Provider field is set, it uses the preset to populate Name, BaseURL, Format, Models.
+func applyPreset(kc *KeyConfig, index int) error {
+	if kc.Provider == "" {
+		return nil // No preset, use traditional config
+	}
+
+	preset, err := GetPreset(kc.Provider)
+	if err != nil {
+		return fmt.Errorf("keys[%d]: %w", index, err)
+	}
+
+	// Fill in missing fields from preset
+	if kc.Name == "" {
+		kc.Name = fmt.Sprintf("%s-%d", kc.Provider, index+1)
+	}
+	if kc.BaseURL == "" {
+		kc.BaseURL = preset.BaseURL
+	}
+	if kc.Format == "" {
+		kc.Format = preset.Format
+	}
+	if len(kc.Models) == 0 {
+		kc.Models = make([]ModelConfig, len(preset.DefaultModels))
+		for i, m := range preset.DefaultModels {
+			kc.Models[i] = ModelConfig{
+				Name:  m.Name,
+				Alias: m.Alias,
+			}
+		}
+	}
+
+	// Note: viper should handle this, but ensure explicit default
+	if !kc.Enabled && kc.Secret != "" {
+		kc.Enabled = true
+	}
+
+	return nil
 }

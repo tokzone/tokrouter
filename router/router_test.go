@@ -32,11 +32,11 @@ func setupTestService(model string) *Service {
 	endpoint.GlobalRegistry().Clear()
 	prov := newTestProvider()
 	ue := newTestUserEndpoint(prov, model, 0)
-	return NewService([]*flux.UserEndpoint{ue}, nil, 2)
+	return NewService([]*flux.UserEndpoint{ue}, nil, 2, nil)
 }
 
 func newTestService(userEndpoints []*flux.UserEndpoint) *Service {
-	return NewService(userEndpoints, nil, 2)
+	return NewService(userEndpoints, nil, 2, nil)
 }
 
 func TestNewService(t *testing.T) {
@@ -45,64 +45,12 @@ func TestNewService(t *testing.T) {
 	ue := newTestUserEndpoint(prov, "gpt-4", 10000)
 	userEndpoints := []*flux.UserEndpoint{ue}
 
-	svc := NewService(userEndpoints, nil, 2)
+	svc := NewService(userEndpoints, nil, 2, nil)
 	if svc == nil {
 		t.Fatal("Service is nil")
 	}
 }
 
-func TestParseModelFromRequest(t *testing.T) {
-	tests := []struct {
-		name  string
-		input []byte
-		want  string
-	}{
-		{
-			name:  "valid model",
-			input: []byte(`{"model": "gpt-4", "messages": []}`),
-			want:  "gpt-4",
-		},
-		{
-			name:  "empty model",
-			input: []byte(`{"model": "", "messages": []}`),
-			want:  "",
-		},
-		{
-			name:  "no model field",
-			input: []byte(`{"messages": []}`),
-			want:  "",
-		},
-		{
-			name:  "invalid JSON",
-			input: []byte(`{"model": "gpt-4"`),
-			want:  "",
-		},
-		{
-			name:  "empty JSON",
-			input: []byte(``),
-			want:  "",
-		},
-		{
-			name:  "model with special chars",
-			input: []byte(`{"model": "gpt-4-1106-preview", "messages": []}`),
-			want:  "gpt-4-1106-preview",
-		},
-		{
-			name:  "model with numbers",
-			input: []byte(`{"model": "gpt-3.5-turbo", "messages": []}`),
-			want:  "gpt-3.5-turbo",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseModelFromRequest(tt.input)
-			if got != tt.want {
-				t.Errorf("parseModelFromRequest() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
 
 func TestRewriteModelInRequest(t *testing.T) {
 	tests := []struct {
@@ -182,7 +130,7 @@ func TestProviderStatuses(t *testing.T) {
 	ue3, _ := flux.NewUserEndpoint("claude-3", k2, 10000)
 	userEndpoints := []*flux.UserEndpoint{ue1, ue2, ue3}
 
-	svc := NewService(userEndpoints, nil, 2)
+	svc := NewService(userEndpoints, nil, 2, nil)
 	statuses := svc.ProviderStatuses()
 
 	if len(statuses) != 2 {
@@ -292,8 +240,8 @@ func TestForward(t *testing.T) {
 	ue := newTestUserEndpoint(prov, "gpt-4", 0)
 	svc := newTestService([]*flux.UserEndpoint{ue})
 
-	req := []byte(`{"model": "unknown-model"}`)
-	_, _, err := svc.Forward(nil, req, provider.ProtocolOpenAI)
+	req := []byte(`{"model": "unknown-model", "messages": []}`)
+	_, _, err := svc.Forward(nil, req, "unknown-model", provider.ProtocolOpenAI)
 	if err == nil {
 		t.Error("expected error for unknown model")
 	}
@@ -305,8 +253,8 @@ func TestForwardStream(t *testing.T) {
 	ue := newTestUserEndpoint(prov, "gpt-4", 0)
 	svc := newTestService([]*flux.UserEndpoint{ue})
 
-	req := []byte(`{"model": "unknown-model"}`)
-	_, _, _, err := svc.ForwardStream(nil, req, provider.ProtocolOpenAI)
+	req := []byte(`{"model": "unknown-model", "messages": []}`)
+	_, _, _, err := svc.ForwardStream(nil, req, "unknown-model", provider.ProtocolOpenAI)
 	if err == nil {
 		t.Error("expected error for unknown model")
 	}
@@ -382,8 +330,6 @@ func TestAliasMapping(t *testing.T) {
 				Secret:  "test-key",
 				Enabled: true,
 				Models: []config.ModelConfig{
-					// Endpoint created with actual model name "gpt-4-1106-preview"
-					// User can request alias "gpt-4-turbo" -> rewritten to actual name
 					{Name: "gpt-4-1106-preview", Alias: "gpt-4-turbo"},
 				},
 			},
@@ -398,11 +344,10 @@ func TestAliasMapping(t *testing.T) {
 	}
 	defer svc.Close()
 
-	// Request for alias should be rewritten to actual model
-	req := []byte(`{"model": "gpt-4-turbo"}`)
-	client, model, providerURL, modifiedReq, err := svc.prepareRequestWithDetails(req)
+	req := []byte(`{"model": "gpt-4-turbo", "messages": []}`)
+	client, model, providerURL, modifiedReq, err := svc.prepareRequest(req, "gpt-4-turbo")
 	if err != nil {
-		t.Fatalf("prepareRequestWithDetails failed: %v", err)
+		t.Fatalf("prepareRequest failed: %v", err)
 	}
 	if client == nil {
 		t.Error("client is nil")
@@ -414,7 +359,6 @@ func TestAliasMapping(t *testing.T) {
 		t.Errorf("providerURL = %s, want https://api.example.com", providerURL)
 	}
 
-	// Check model was rewritten from alias to actual name
 	var modified map[string]interface{}
 	if err := json.Unmarshal(modifiedReq, &modified); err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)

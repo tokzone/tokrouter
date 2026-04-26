@@ -420,3 +420,179 @@ func TestIsValidFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadWithPreset(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	content := `
+server:
+  port: 8765
+
+keys:
+  # Simplified config using preset
+  - provider: openai
+    secret: "sk-test-key"
+
+  # Another preset with custom models override
+  - provider: deepseek
+    secret: "sk-deepseek"
+    models:
+      - name: deepseek-chat
+
+stats:
+  enabled: false
+
+log:
+  level: info
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Check first key (openai preset)
+	if cfg.Keys[0].Name != "openai-1" {
+		t.Errorf("Key[0] Name = %s, want openai-1 (auto-generated)", cfg.Keys[0].Name)
+	}
+	if cfg.Keys[0].BaseURL != "https://api.openai.com/v1" {
+		t.Errorf("Key[0] BaseURL = %s, want preset value", cfg.Keys[0].BaseURL)
+	}
+	if cfg.Keys[0].Format != "openai" {
+		t.Errorf("Key[0] Format = %s, want openai", cfg.Keys[0].Format)
+	}
+	if len(cfg.Keys[0].Models) == 0 {
+		t.Errorf("Key[0] Models should be auto-filled from preset")
+	}
+	// Check that preset models are filled
+	foundGPT4o := false
+	for _, m := range cfg.Keys[0].Models {
+		if m.Name == "gpt-4o" {
+			foundGPT4o = true
+			break
+		}
+	}
+	if !foundGPT4o {
+		t.Errorf("Key[0] Models should include gpt-4o from preset")
+	}
+
+	// Check second key (deepseek with custom models)
+	if cfg.Keys[1].Name != "deepseek-2" {
+		t.Errorf("Key[1] Name = %s, want deepseek-2", cfg.Keys[1].Name)
+	}
+	if cfg.Keys[1].BaseURL != "https://api.deepseek.com" {
+		t.Errorf("Key[1] BaseURL = %s, want preset value", cfg.Keys[1].BaseURL)
+	}
+	if len(cfg.Keys[1].Models) != 1 {
+		t.Errorf("Key[1] Models count = %d, want 1 (custom override)", len(cfg.Keys[1].Models))
+	}
+	if cfg.Keys[1].Models[0].Name != "deepseek-chat" {
+		t.Errorf("Key[1] Model = %s, want deepseek-chat", cfg.Keys[1].Models[0].Name)
+	}
+}
+
+func TestPresetExists(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"openai", true},
+		{"anthropic", true},
+		{"deepseek", true},
+		{"qwen", true},
+		{"zhipu", true},
+		{"invalid-provider", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := PresetExists(tt.name); got != tt.want {
+				t.Errorf("PresetExists(%s) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetPreset(t *testing.T) {
+	preset, err := GetPreset("openai")
+	if err != nil {
+		t.Fatalf("GetPreset(openai) error: %v", err)
+	}
+
+	if preset.DisplayName != "OpenAI" {
+		t.Errorf("DisplayName = %s, want OpenAI", preset.DisplayName)
+	}
+	if preset.BaseURL != "https://api.openai.com/v1" {
+		t.Errorf("BaseURL = %s, want https://api.openai.com/v1", preset.BaseURL)
+	}
+	if preset.Format != "openai" {
+		t.Errorf("Format = %s, want openai", preset.Format)
+	}
+	if preset.Region != "global" {
+		t.Errorf("Region = %s, want global", preset.Region)
+	}
+	if len(preset.DefaultModels) == 0 {
+		t.Errorf("DefaultModels should not be empty")
+	}
+
+	// Test invalid preset
+	_, err = GetPreset("invalid")
+	if err == nil {
+		t.Errorf("GetPreset(invalid) should return error")
+	}
+}
+
+func TestListPresets(t *testing.T) {
+	presets := ListPresets()
+
+	if len(presets) < 20 {
+		t.Errorf("ListPresets count = %d, want at least 20", len(presets))
+	}
+
+	// Check that presets are sorted by region then name
+	// Global presets should come first
+	for i, p := range presets {
+		if p.Name == "" {
+			t.Errorf("Preset[%d] has empty name", i)
+		}
+		if p.BaseURL == "" {
+			t.Errorf("Preset[%d] %s has empty BaseURL", i, p.Name)
+		}
+		if p.Format == "" {
+			t.Errorf("Preset[%d] %s has empty Format", i, p.Name)
+		}
+	}
+}
+
+func TestInvalidPreset(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	content := `
+server:
+  port: 8765
+
+keys:
+  - provider: invalid-provider
+    secret: "sk-test"
+
+stats:
+  enabled: false
+
+log:
+  level: info
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Errorf("Load with invalid provider should return error")
+	}
+}

@@ -7,6 +7,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/tokflux/tokrouter/release.yml?style=flat-square)](https://github.com/tokflux/tokrouter/actions)
+[![Version](https://img.shields.io/badge/Version-v0.7.0-blue?style=flat-square)]()
 
 [English Documentation](README.md)
 
@@ -15,20 +16,20 @@
 ## 4 行配置上线
 
 ```yaml
-# config.yaml
+# config.yaml - 简化配置，使用预设
 keys:
-  - name: openai-main
-    base_url: "https://api.openai.com/v1"
-    format: openai
+  - provider: openai
     secret: "${OPENAI_API_KEY}"
-    enabled: true
-    models:
-      - name: gpt-4
 
 # 启动
 tokrouter serve
 # 网关就绪：http://127.0.0.1:8765
 ```
+
+**提供商预设** — 只需指定 `provider` 和 `secret`，其他自动填充：
+- 国际：openai, anthropic, google, mistral, cohere, groq, deepseek
+- 国内：zhipu, qwen, tencent, baidu, moonshot, minimax, siliconflow, yi...
+- 平台：together, replicate, openrouter
 
 ---
 
@@ -137,30 +138,29 @@ docker run -d \
 ## 快速开始
 
 ```bash
+# 安装
 git clone https://github.com/tokflux/tokrouter.git
 cd tokrouter
 go build ./cmd/tokrouter
 
+# 简化配置（使用预设）
 cat > config.yaml << 'EOF'
 keys:
-  - name: openai-main
-    base_url: "https://api.openai.com/v1"
-    format: openai
+  - provider: openai
     secret: "${OPENAI_API_KEY}"
-    enabled: true
-    models:
-      - name: gpt-4
-      - name: gpt-3.5-turbo
-
-  - name: anthropic-main
-    base_url: "https://api.anthropic.com/v1"
-    format: anthropic
+  - provider: anthropic
     secret: "${ANTHROPIC_API_KEY}"
-    enabled: true
-    models:
-      - name: claude-3-opus
+  - provider: deepseek
+    secret: "${DEEPSEEK_API_KEY}"
 EOF
 
+tokrouter serve
+```
+
+**或使用交互式初始化：**
+
+```bash
+tokrouter init  # 交互式配置向导
 tokrouter serve
 ```
 
@@ -354,26 +354,36 @@ anthropic-main 23456      12345     567        189ms        99.2%
 ## CLI 命令
 
 ```bash
-tokrouter init                       # 交互式配置（含输入验证和确认步骤）
+tokrouter init                       # 交互式配置向导
 tokrouter serve                      # 启动服务器 (127.0.0.1:8765)
 tokrouter serve --host 0.0.0.0       # 监听所有接口
-tokrouter serve --port 9000          # 自定义端口
+
+# 新增：服务管理
+tokrouter add <provider>             # 使用预设添加服务（交互式）
+tokrouter list services              # 列出所有已配置服务
+tokrouter list assistants            # 列出支持的 AI 助手
+tokrouter show <service>             # 显示服务详情
+tokrouter remove <service>           # 删除服务
+tokrouter start                      # 启动 tokrouter 守护进程
+tokrouter stop                       # 停止 tokrouter 守护进程
+
+# 新增：配置管理
+tokrouter config service <name> --enable/--disable/--secret/--add-model/--remove-model
+tokrouter config assistant <name>    # 配置 AI 助手使用 tokrouter
+tokrouter config assistant --auto    # 自动配置所有已安装的助手
+
+# 状态监控
 tokrouter status                     # 查看密钥状态
 tokrouter status --watch             # 实时刷新
 tokrouter models                     # 列出所有可用模型
-tokrouter keys                       # 列出所有密钥
-tokrouter keys add                   # 添加密钥（交互式）
-tokrouter keys add --name ...        # 使用参数添加密钥
-tokrouter keys remove <name>         # 删除密钥
-tokrouter keys enable <name>         # 启用密钥
-tokrouter keys disable <name>        # 禁用密钥
-tokrouter keys ping <name>           # 测试连通性（显示延迟和汇总）
-tokrouter summary --month            # 月度统计（含平均延迟和成功率）
-tokrouter summary --today            # 今日统计
+tokrouter keys                       # 列出所有密钥（旧命令）
+tokrouter keys ping <name>           # 测试连通性
+tokrouter summary --month            # 月度统计
 tokrouter summary --chart            # ASCII 图表
-tokrouter summary --export csv       # 导出 CSV
-tokrouter summary --export json      # 导出 JSON
-tokrouter config                     # 显示配置
+
+# OpenAPI 文档（新增）
+curl http://localhost:8765/openapi.yaml  # OpenAPI 规范
+curl http://localhost:8765/docs          # Swagger UI
 ```
 
 ---
@@ -386,6 +396,8 @@ tokrouter config                     # 显示配置
 | `POST /v1/messages` | Anthropic | Anthropic 兼容，支持流式 |
 | `GET /status` | JSON | 密钥状态 |
 | `GET /health` | JSON | 健康检查（含依赖状态） |
+| `GET /openapi.yaml` | YAML | OpenAPI 3.0 规范 |
+| `GET /docs` | HTML | Swagger UI 文档 |
 
 ---
 

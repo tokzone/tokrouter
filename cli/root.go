@@ -13,10 +13,11 @@ var version = "v0.7.0"
 // Execute runs the CLI
 func Execute() {
 	app := &cli.Command{
-		Name:    "tokrouter",
-		Aliases: []string{"tr"},
-		Usage:   "LLM API Router - route API requests to multiple providers",
-		Version: version,
+		Name:                  "tokrouter",
+		Aliases:               []string{"tr"},
+		Usage:                 "LLM API Router - route API requests to multiple providers",
+		Version:               version,
+		EnableShellCompletion: true,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "config",
@@ -26,19 +27,14 @@ func Execute() {
 			},
 		},
 		Commands: []*cli.Command{
-			initCmd,
 			addCmd,
 			removeCmd,
 			listCmd,
 			showCmd,
 			configCmd,
+			assistantCmd,
 			startCmd,
 			stopCmd,
-			// Legacy commands (kept for backward compatibility)
-			serveCmd,
-			keysCmd,
-			modelsCmd,
-			summaryCmd,
 		},
 	}
 
@@ -50,14 +46,11 @@ func Execute() {
 
 // getConfigPath gets config path from flag or environment
 func getConfigPath(c *cli.Command) string {
-	// From flag
 	if path := c.String("config"); path != "" {
 		return path
 	}
-	// From environment
 	if envPath := os.Getenv("TOKROUTER_CONFIG"); envPath != "" {
 		return envPath
 	}
-	// Default
 	return "./config.yaml"
 }

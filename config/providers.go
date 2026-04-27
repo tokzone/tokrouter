@@ -45,6 +45,7 @@ type ProviderPreset struct {
 	DisplayName   string       // Display name (e.g., "OpenAI", "DeepSeek", "阿里通义千问")
 	BaseURL       string       // API base URL
 	Format        string       // Protocol format: openai, anthropic, gemini, cohere
+	Protocols     []string     // Multi-protocol support: ["openai", "anthropic"] — takes precedence over Format
 	DefaultModels []ModelInfo  // Default model list
 	DocURL        string       // Documentation / API Key URL
 	Region        string       // Service region: "global" or "china"
@@ -156,6 +157,7 @@ var BuiltinPresets = map[string]ProviderPreset{
 		DisplayName: "DeepSeek",
 		BaseURL:     "https://api.deepseek.com",
 		Format:      FormatOpenAI,
+		Protocols:   []string{FormatOpenAI, FormatAnthropic},
 		Region:      "china",
 		DocURL:      "https://platform.deepseek.com/api-keys",
 		DefaultModels: []ModelInfo{
@@ -435,6 +437,7 @@ var BuiltinPresets = map[string]ProviderPreset{
 		DisplayName: "OpenRouter",
 		BaseURL:     "https://openrouter.ai/api/v1",
 		Format:      FormatOpenAI,
+		Protocols:   []string{FormatOpenAI, FormatAnthropic},
 		Region:      "global",
 		DocURL:      "https://openrouter.ai/keys",
 		DefaultModels: []ModelInfo{

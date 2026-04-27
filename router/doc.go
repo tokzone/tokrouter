@@ -1,29 +1,26 @@
 // Package router provides the core routing service for tokrouter.
 //
-// The Service struct coordinates flux.Client for request forwarding
+// Router coordinates protocol-specific DoFunc maps for request forwarding
 // and usage tracking for cost statistics. It implements:
-//   - Request forwarding (Forward, ForwardStream)
+//   - Request forwarding (ForwardOpenAI, ForwardAnthropic, and stream variants)
 //   - Provider status tracking (ProviderStatuses)
 //   - Circuit breaker health detection
 //   - Hot reload via atomic state swapping (Reload)
 //
-// The service maintains model-specific flux.Client instances and selects targets based on:
-//  1. Priority (lower = preferred) - initial selection
-//  2. EWMA latency - runtime adjustment
-//
-// The service is created from config using NewServiceFromConfig, which initializes
-// the clients and optional usage tracking.
+// Routing selects endpoints based on priority (lower = preferred) and
+// health. Protocol selection is orthogonal — input protocol is baked into
+// DoFunc closures at startup, output protocol is pre-computed per endpoint.
 //
 // Basic usage:
 //
-//	svc, err := router.NewServiceFromConfig(cfg)
+//	svc, err := router.NewFromConfig(cfg)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //	defer svc.Close()
 //
-//	// Forward a request
-//	resp, usage, err := svc.Forward(ctx, body, provider.ProtocolOpenAI)
+//	// Forward an OpenAI request
+//	resp, usage, err := svc.ForwardOpenAI(ctx, body, "gpt-4")
 //
 //	// Hot reload config
 //	if err := svc.Reload(newCfg); err != nil {

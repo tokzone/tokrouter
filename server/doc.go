@@ -11,7 +11,7 @@
 //
 // Basic usage:
 //
-//	svc, _ := router.NewServiceFromConfig(cfg)
+//	svc, _ := router.NewFromConfig(cfg)
 //	server := server.NewServer(svc, traceCfg)
 //	server.Run()
 package server

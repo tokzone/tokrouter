@@ -15,13 +15,13 @@ import (
 	"github.com/tokzone/tokrouter/router"
 )
 
-func setupTestRouterService() *router.Service {
+func setupTestRouter() router.Router {
 	endpoint.GlobalRegistry().Clear()
-	prov := provider.NewProvider(1, "https://api.example.com", provider.ProtocolOpenAI)
-	endpoint.RegisterEndpoint(1, prov, "gpt-4")
+	prov := provider.NewProvider(1, "https://api.example.com")
+	endpoint.RegisterEndpoint(1, prov, "gpt-4", []provider.Protocol{provider.ProtocolOpenAI})
 	k, _ := flux.NewAPIKey(prov, "test-key")
 	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
-	return router.NewService([]*flux.UserEndpoint{ue}, nil, 2, nil)
+	return router.New([]*flux.UserEndpoint{ue}, nil, 2, nil, nil, nil)
 }
 
 func TestHandleHealth(t *testing.T) {
@@ -46,7 +46,7 @@ func TestHandleHealth(t *testing.T) {
 }
 
 func TestHandleHealthWithRouter(t *testing.T) {
-	svc := setupTestRouterService()
+	svc := setupTestRouter()
 	defer svc.Close()
 
 	handler := HandleHealth(svc)
@@ -71,15 +71,15 @@ func TestHandleHealthWithRouter(t *testing.T) {
 
 func TestHandleHealthDegraded(t *testing.T) {
 	endpoint.GlobalRegistry().Clear()
-	prov := provider.NewProvider(1, "https://api.example.com", provider.ProtocolOpenAI)
-	ep := endpoint.RegisterEndpoint(1, prov, "gpt-4")
+	prov := provider.NewProvider(1, "https://api.example.com")
+	ep := endpoint.RegisterEndpoint(1, prov, "gpt-4", []provider.Protocol{provider.ProtocolOpenAI})
 	ep.MarkEndpointFail()
 	ep.MarkEndpointFail()
 	ep.MarkEndpointFail()
 
 	k, _ := flux.NewAPIKey(prov, "test-key")
 	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
-	svc := router.NewService([]*flux.UserEndpoint{ue}, nil, 2, nil)
+	svc := router.New([]*flux.UserEndpoint{ue}, nil, 2, nil, nil, nil)
 	defer svc.Close()
 
 	handler := HandleHealth(svc)
@@ -101,11 +101,11 @@ func TestHandleHealthDegraded(t *testing.T) {
 	}
 }
 
-func TestHandleRequestInvalidJSON(t *testing.T) {
-	svc := setupTestRouterService()
+func TestHandleOpenAIInvalidJSON(t *testing.T) {
+	svc := setupTestRouter()
 	defer svc.Close()
 
-	handler := HandleRequest(svc, provider.ProtocolOpenAI)
+	handler := HandleOpenAI(svc)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("invalid json"))
 	w := httptest.NewRecorder()
 
@@ -116,11 +116,11 @@ func TestHandleRequestInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestHandleRequestMissingModel(t *testing.T) {
-	svc := setupTestRouterService()
+func TestHandleOpenAIMissingModel(t *testing.T) {
+	svc := setupTestRouter()
 	defer svc.Close()
 
-	handler := HandleRequest(svc, provider.ProtocolOpenAI)
+	handler := HandleOpenAI(svc)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"messages": []}`))
 	w := httptest.NewRecorder()
 
@@ -205,7 +205,7 @@ func TestHandleStatus(t *testing.T) {
 }
 
 func TestHandleStatusWithRouter(t *testing.T) {
-	svc := setupTestRouterService()
+	svc := setupTestRouter()
 	defer svc.Close()
 
 	handler := HandleStatus(svc)
@@ -253,7 +253,7 @@ func TestWriteErrorResponseWithCode(t *testing.T) {
 }
 
 func TestNewServer(t *testing.T) {
-	svc := setupTestRouterService()
+	svc := setupTestRouter()
 	defer svc.Close()
 
 	traceCfg := config.TraceConfig{Enabled: true, Header: "x-request-id"}

@@ -22,7 +22,7 @@ keys:
     secret: "${OPENAI_API_KEY}"
 
 # Start
-tokrouter serve
+tr start
 # Your gateway is ready at http://127.0.0.1:8765
 ```
 
@@ -102,7 +102,7 @@ Invoke-WebRequest -Uri "https://github.com/tokflux/tokrouter/releases/latest/dow
 
 Verify:
 ```bash
-tokrouter version
+tr --version
 ```
 
 ### Build from Source
@@ -176,14 +176,14 @@ keys:
     secret: "${DEEPSEEK_API_KEY}"
 EOF
 
-tokrouter serve
+tr start
 ```
 
 **Or use interactive init:**
 
 ```bash
-tokrouter init  # Interactive configuration wizard
-tokrouter serve
+tr add       # Interactive: add services (presets or custom)
+tr start
 ```
 
 ---
@@ -359,13 +359,13 @@ This avoids slow endpoints automatically.
 ## Cost Tracking
 
 ```bash
-tokrouter status
+tr show health
 
 Key            Format    Healthy    Models
 openai-main    openai    OK         2/2
 anthropic-main anthropic OK         1/1
 
-tokrouter summary --month
+tr show usage --month
 Key            Input      Output     Requests   Avg Latency  Success
 openai-main    152340     45678     1234       245ms        98.5%
 anthropic-main 23456      12345     567        189ms        99.2%
@@ -376,36 +376,46 @@ anthropic-main 23456      12345     567        189ms        99.2%
 ## CLI Commands
 
 ```bash
-tokrouter init                       # Interactive configuration wizard
-tokrouter serve                      # Start server (127.0.0.1:8765)
-tokrouter serve --host 0.0.0.0       # Listen on all interfaces
+# Quick start
+tr add openai --secret sk-xxx        # Add a service with preset
+tr start                             # Start server at 127.0.0.1:8765
+tr start --port 8080                 # Custom port
 
-# New: Service management
-tokrouter add <provider>             # Add service with preset (interactive)
-tokrouter list services              # List all configured services
-tokrouter list assistants            # List supported AI assistants
-tokrouter show <service>             # Show service details
-tokrouter remove <service>           # Remove a service
-tokrouter start                      # Start tokrouter daemon
-tokrouter stop                       # Stop tokrouter daemon
+# Service management
+tr add                               # Interactive: select preset or custom
+tr add deepseek --secret sk-xxx      # Add with preset, auto-fill config
+tr add --name my --base-url ... --format openai --secret sk-xxx --model gpt-4
+tr remove <name>                     # Remove a service
+tr config <name> --enable            # Enable/disable a service
+tr config <name> --secret sk-new     # Update API key
+tr config <name> --add-model gpt-4   # Add model to service
+tr config <name> --remove-model old  # Remove model from service
 
-# New: Configuration
-tokrouter config service <name> --enable/--disable/--secret/--add-model/--remove-model
-tokrouter config assistant <name>    # Configure AI assistant to use tokrouter
-tokrouter config assistant --auto    # Auto-configure all installed assistants
+# Viewing
+tr list services                     # List all configured services (default)
+tr list models                       # List all available models
+tr list presets                      # List provider presets (26 built-in)
+tr list assistants                   # List supported AI tools
+tr show service <name>               # Service details
+tr show preset <name>                # Preset details
+tr show config                       # Current configuration
+tr show health                       # Endpoint health status
+tr show health --watch               # Real-time refresh (2s)
+tr show usage --month                # Monthly usage statistics
+tr show usage --chart                # Token distribution chart
+tr show usage --export csv           # Export as CSV
 
-# Status & monitoring
-tokrouter status                     # Show key status
-tokrouter status --watch             # Real-time refresh
-tokrouter models                     # List all available models
-tokrouter keys                       # List all keys (legacy)
-tokrouter keys ping <name>           # Test connectivity
-tokrouter summary --month            # Monthly statistics
-tokrouter summary --chart            # ASCII bar chart
+# AI assistant integration
+tr assistant list                    # List supported AI tools
+tr assistant auto                    # Auto-detect and configure all
+tr assistant cursor                  # Configure specific tool
 
-# OpenAPI documentation (new)
-curl http://localhost:8765/openapi.yaml  # OpenAPI spec
-curl http://localhost:8765/docs          # Swagger UI
+# Server lifecycle
+tr start [--host HOST] [--port PORT] # Start server
+tr stop                              # Stop server gracefully
+
+# Shell completion
+tr completion bash|zsh|fish          # Generate completion script
 ```
 
 ---
@@ -418,12 +428,23 @@ curl http://localhost:8765/docs          # Swagger UI
 | `POST /v1/messages` | Anthropic | Anthropic compatible, streaming supported |
 | `GET /status` | JSON | Key status |
 | `GET /health` | JSON | Health check with dependency status |
+| `POST /shutdown` | - | Graceful server shutdown |
 | `GET /openapi.yaml` | YAML | OpenAPI 3.0 specification |
 | `GET /docs` | HTML | Swagger UI documentation |
 
 ---
 
 ## AI Tool Integration
+
+Use `tr assistant` to auto-configure your AI tools:
+
+```bash
+tr assistant list          # See supported tools
+tr assistant auto          # Auto-detect and configure all
+tr assistant cursor        # Configure a specific tool
+```
+
+Manual configuration reference:
 
 **Claude Code** (Anthropic format):
 ```json
@@ -525,24 +546,24 @@ tokrouter/
 
 **Q: How do I add a new API key?**
 ```bash
-tokrouter keys add --name my-key --format openai --secret $MY_KEY --base-url https://api.example.com/v1
+tr add --name my-key --format openai --secret $MY_KEY --base-url https://api.example.com/v1
 ```
 
 **Q: How do I test if my key works?**
 ```bash
-tokrouter keys ping openai-main
+tr show health          # Check endpoint health
 ```
 
 **Q: How do I use Claude Code with tokrouter?**
 ```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:8765
-claude
+tr assistant claude-code
+# Or manually: export ANTHROPIC_BASE_URL=http://127.0.0.1:8765
 ```
 
 **Q: How do I use aider with tokrouter?**
 ```bash
-export OPENAI_API_BASE=http://127.0.0.1:8765/v1
-aider --model gpt-4
+tr assistant aider
+# Or manually: export OPENAI_API_BASE=http://127.0.0.1:8765/v1
 ```
 
 **Q: Why port 8765?**
@@ -566,13 +587,13 @@ git clone https://github.com/tokflux/tokrouter.git
 cd tokrouter
 go build ./cmd/tokrouter
 
-tokrouter init
-tokrouter serve
+tr add
+tr start
 ```
 
 **Next steps:**
 1. Star the repo
-2. Run `tokrouter init` to configure
+2. Run `tr add` to configure
 3. Point your AI tools to `http://127.0.0.1:8765`
 
 ---

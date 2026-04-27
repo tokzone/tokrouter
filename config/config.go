@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -62,22 +63,72 @@ type KeyConfig struct {
 	Provider string `mapstructure:"provider"`
 
 	// Traditional fields (required when Provider is not set)
-	Name    string        `mapstructure:"name"`
-	BaseURL string        `mapstructure:"base_url"`
-	Format  string        `mapstructure:"format"` // "openai", "anthropic", "gemini", "cohere"
-	Secret  string        `mapstructure:"secret"`
-	Enabled bool          `mapstructure:"enabled"` // kept for config file compatibility
-	Models  []ModelConfig `mapstructure:"models"`
+	Name      string        `mapstructure:"name"`
+	BaseURL   string        `mapstructure:"base_url"`
+	Format    string        `mapstructure:"format"` // Single protocol: "openai", "anthropic", "gemini", "cohere"
+	Secret    string        `mapstructure:"secret"`
+	Enabled   bool          `mapstructure:"enabled"` // kept for config file compatibility
+	Models    []ModelConfig `mapstructure:"models"`
 }
 
-// Protocol returns the provider.Protocol for this key config
-// Returns ProtocolOpenAI as fallback if format is invalid (should not happen after Validate)
+// Protocol returns the provider.Protocol for this key config (default protocol).
+// Derives from the preset (via Provider field), or falls back to Format.
 func (k *KeyConfig) Protocol() provider.Protocol {
-	p, err := ParseProtocol(k.Format)
-	if err != nil {
-		return provider.ProtocolOpenAI // explicit fallback
+	if k.Provider != "" {
+		if preset, err := GetPreset(k.Provider); err == nil {
+			if len(preset.Protocols) > 0 {
+				if p, err := ParseProtocol(preset.Protocols[0]); err == nil {
+					return p
+				}
+			}
+			if preset.Format != "" {
+				if p, err := ParseProtocol(preset.Format); err == nil {
+					return p
+				}
+			}
+		}
 	}
-	return p
+	if k.Format != "" {
+		if p, err := ParseProtocol(k.Format); err == nil {
+			return p
+		}
+	}
+	return provider.ProtocolOpenAI
+}
+
+// ProtocolList returns the list of supported protocols for this key.
+// Derives from the preset (via Provider field), or falls back to Format.
+func (k *KeyConfig) ProtocolList() []provider.Protocol {
+	if k.Provider != "" {
+		if preset, err := GetPreset(k.Provider); err == nil {
+			if len(preset.Protocols) > 0 {
+				result := make([]provider.Protocol, 0, len(preset.Protocols))
+				for _, s := range preset.Protocols {
+					p, err := ParseProtocol(s)
+					if err != nil {
+						continue
+					}
+					if !slices.Contains(result, p) {
+						result = append(result, p)
+					}
+				}
+				if len(result) > 0 {
+					return result
+				}
+			}
+			if preset.Format != "" {
+				if p, err := ParseProtocol(preset.Format); err == nil {
+					return []provider.Protocol{p}
+				}
+			}
+		}
+	}
+	if k.Format != "" {
+		if p, err := ParseProtocol(k.Format); err == nil {
+			return []provider.Protocol{p}
+		}
+	}
+	return []provider.Protocol{provider.ProtocolOpenAI}
 }
 
 // HasModel returns true if the key has a model with the given name.
@@ -447,7 +498,7 @@ func (c *Config) ToUserEndpoints() []*flux.UserEndpoint {
 			continue
 		}
 
-		prov := provider.NewProvider(providerID, kc.BaseURL, kc.Protocol())
+		prov := provider.NewProvider(providerID, kc.BaseURL)
 		providerID++
 
 		apiKey, err := flux.NewAPIKey(prov, kc.Secret)
@@ -455,8 +506,10 @@ func (c *Config) ToUserEndpoints() []*flux.UserEndpoint {
 			continue
 		}
 
+		protocols := kc.ProtocolList()
+
 		for _, mc := range kc.Models {
-			ep := endpoint.RegisterEndpoint(endpointID, prov, mc.Name)
+			ep := endpoint.RegisterEndpoint(endpointID, prov, mc.Name, protocols)
 			if ep == nil {
 				continue
 			}
@@ -531,14 +584,18 @@ func Save(configPath string, cfg *Config) error {
 			}
 			models = append(models, m)
 		}
-		keys = append(keys, map[string]interface{}{
+		kcMap := map[string]interface{}{
 			"name":     kc.Name,
 			"base_url": kc.BaseURL,
 			"format":   kc.Format,
 			"secret":   kc.Secret,
 			"enabled":  kc.Enabled,
 			"models":   models,
-		})
+		}
+		if kc.Provider != "" {
+			kcMap["provider"] = kc.Provider
+		}
+		keys = append(keys, kcMap)
 	}
 	v.Set("keys", keys)
 
@@ -546,7 +603,7 @@ func Save(configPath string, cfg *Config) error {
 }
 
 // applyPreset fills in missing fields from a provider preset.
-// If Provider field is set, it uses the preset to populate Name, BaseURL, Format, Models.
+// If Provider field is set, it uses the preset to populate Name, BaseURL, Format, Protocols, Models.
 func applyPreset(kc *KeyConfig, index int) error {
 	if kc.Provider == "" {
 		return nil // No preset, use traditional config

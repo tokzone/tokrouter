@@ -12,21 +12,20 @@ import (
 
 	"github.com/tokzone/tokrouter/config"
 	"github.com/tokzone/tokrouter/router"
-
-	"github.com/tokzone/fluxcore/provider"
 )
 
 // Server represents HTTP server
 type Server struct {
 	cfg        config.ServerConfig
 	traceCfg   config.TraceConfig
-	router     router.RouterService
+	router     router.Router
 	server     *http.Server
 	configPath string
+	shutdownCh chan struct{}
 }
 
 // NewServer creates a new HTTP server
-func NewServer(routerSvc router.RouterService, traceCfg config.TraceConfig, configPath string) *Server {
+func NewServer(routerSvc router.Router, traceCfg config.TraceConfig, configPath string) *Server {
 	cfg := routerSvc.ServerConfig()
 	mux := http.NewServeMux()
 
@@ -35,8 +34,8 @@ func NewServer(routerSvc router.RouterService, traceCfg config.TraceConfig, conf
 		return WithTraceID(next, traceCfg)
 	}
 
-	mux.HandleFunc("/v1/chat/completions", traceMiddleware(HandleRequest(routerSvc, provider.ProtocolOpenAI)))
-	mux.HandleFunc("/v1/messages", traceMiddleware(HandleRequest(routerSvc, provider.ProtocolAnthropic)))
+	mux.HandleFunc("/v1/chat/completions", traceMiddleware(HandleOpenAI(routerSvc)))
+	mux.HandleFunc("/v1/messages", traceMiddleware(HandleAnthropic(routerSvc)))
 	mux.HandleFunc("/status", traceMiddleware(HandleStatus(routerSvc)))
 	mux.HandleFunc("/health", traceMiddleware(HandleHealth(routerSvc)))
 
@@ -63,12 +62,43 @@ func NewServer(routerSvc router.RouterService, traceCfg config.TraceConfig, conf
 		}
 	}
 
-	return &Server{
+	srv := &Server{
 		cfg:        cfg,
 		traceCfg:   traceCfg,
 		router:     routerSvc,
 		server:     httpServer,
 		configPath: configPath,
+		shutdownCh: make(chan struct{}),
+	}
+
+	// Register shutdown endpoint after server struct is created
+	mux.HandleFunc("/shutdown", HandleShutdown(srv))
+
+	return srv
+}
+
+// shutdown triggers graceful shutdown.
+func (s *Server) shutdown() {
+	close(s.shutdownCh)
+}
+
+// gracefulShutdown performs a graceful HTTP server shutdown with a 30s timeout.
+func (s *Server) gracefulShutdown(done chan struct{}) {
+	fmt.Println("\nShutting down...")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+	if err := s.server.Shutdown(shutdownCtx); err != nil {
+		fmt.Printf("Shutdown error: %v\n", err)
+	}
+	close(done)
+}
+
+// HandleShutdown returns an HTTP handler that triggers server shutdown.
+func HandleShutdown(s *Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+		go s.shutdown()
 	}
 }
 
@@ -78,31 +108,29 @@ func (s *Server) Run() {
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+		defer signal.Stop(sigCh)
 		for {
-			sig := <-sigCh
-			switch sig {
-			case syscall.SIGHUP:
-				// Hot reload
-				fmt.Println("Received SIGHUP, reloading config...")
-				cfg, err := config.Load(s.configPath)
-				if err != nil {
-					fmt.Printf("Error loading config: %v\n", err)
-					continue
+			select {
+			case sig := <-sigCh:
+				switch sig {
+				case syscall.SIGHUP:
+					fmt.Println("Received SIGHUP, reloading config...")
+					cfg, err := config.Load(s.configPath)
+					if err != nil {
+						fmt.Printf("Error loading config: %v\n", err)
+						continue
+					}
+					if err := s.router.Reload(cfg); err != nil {
+						fmt.Printf("Error applying config: %v\n", err)
+						continue
+					}
+					fmt.Println("Config reloaded successfully")
+				case syscall.SIGINT, syscall.SIGTERM:
+					s.gracefulShutdown(done)
+					return
 				}
-				if err := s.router.Reload(cfg); err != nil {
-					fmt.Printf("Error applying config: %v\n", err)
-					continue
-				}
-				fmt.Println("Config reloaded successfully")
-			case syscall.SIGINT, syscall.SIGTERM:
-				fmt.Println("\nShutting down...")
-				// Graceful shutdown with timeout
-				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer shutdownCancel()
-				if err := s.server.Shutdown(shutdownCtx); err != nil {
-					fmt.Printf("Shutdown error: %v\n", err)
-				}
-				close(done)
+			case <-s.shutdownCh:
+				s.gracefulShutdown(done)
 				return
 			}
 		}

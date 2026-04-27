@@ -9,11 +9,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/tokzone/fluxcore/flux"
+	"github.com/tokzone/fluxcore/message"
+
 	"github.com/tokzone/tokrouter/config"
 	"github.com/tokzone/tokrouter/router"
 	"github.com/tokzone/tokrouter/usage"
-
-	"github.com/tokzone/fluxcore/provider"
 )
 
 // TraceIDKey is the context key for trace ID
@@ -24,51 +25,106 @@ const TraceIDKey ctxKey = "trace_id"
 // MaxRequestBodySize limits request body size (10MB)
 const MaxRequestBodySize = 10 * 1024 * 1024
 
-// HandleRequest handles all requests using fluxcore
-func HandleRequest(routerSvc router.RouterService, clientFormat provider.Protocol) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Read request body with size limit
-		body, err := io.ReadAll(io.LimitReader(r.Body, MaxRequestBodySize))
-		if err != nil {
-			WriteErrorResponse(w, http.StatusBadRequest, NewErrorResponseWithCode(ErrCodeInvalidRequest, err.Error()))
+// requestMeta is a minimal struct for extracting model/stream from the request body
+// without unmarshaling the entire payload (e.g., large message arrays).
+type requestMeta struct {
+	Model  string `json:"model"`
+	Stream bool   `json:"stream"`
+}
+
+type forwardFunc func(context.Context, []byte, string) ([]byte, *message.Usage, error)
+type streamForwardFunc func(context.Context, []byte, string) (*flux.StreamResult, string, string, error)
+
+// HandleOpenAI handles requests on the OpenAI-compatible endpoint (POST /v1/chat/completions).
+func HandleOpenAI(r router.Router) http.HandlerFunc {
+	return handleRoute(r.ForwardOpenAI, r.ForwardStreamOpenAI, r)
+}
+
+// HandleAnthropic handles requests on the Anthropic-compatible endpoint (POST /v1/messages).
+func HandleAnthropic(r router.Router) http.HandlerFunc {
+	return handleRoute(r.ForwardAnthropic, r.ForwardStreamAnthropic, r)
+}
+
+// handleRoute is the common handler for all protocol endpoints.
+func handleRoute(fwd forwardFunc, streamFwd streamForwardFunc, r router.Router) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		body, model, stream, ok := readAndParse(w, req)
+		if !ok {
 			return
 		}
-		r.Body.Close()
 
-		// Parse model for logging (ignore errors - not critical)
-		var reqMap map[string]interface{}
-		if err := json.Unmarshal(body, &reqMap); err != nil {
-			WriteErrorResponse(w, http.StatusBadRequest, NewErrorResponseWithCode(ErrCodeInvalidRequest, "invalid JSON body"))
-			return
-		}
-		model, _ := reqMap["model"].(string)
-		stream, _ := reqMap["stream"].(bool)
+		LogRequest(req.Method, req.URL.Path, model, req.Header)
 
-		LogRequest(r.Method, r.URL.Path, model, r.Header)
-
-		// Handle streaming vs non-streaming
 		if stream {
-			handleStreaming(w, r, routerSvc, body, clientFormat, model)
+			result, actualModel, providerURL, err := streamFwd(req.Context(), body, model)
+			if err != nil {
+				writeStreamError(w, model, err)
+				return
+			}
+			defer result.Close()
+
+			writeSSE(w, req, result)
+
+			usage := result.Usage()
+			Info("stream completed", map[string]interface{}{
+				"model":         actualModel,
+				"provider":      providerURL,
+				"input_tokens":  usage.InputTokens,
+				"output_tokens": usage.OutputTokens,
+			})
+			r.RecordStreamUsage(usage, actualModel, providerURL)
 		} else {
-			handleNonStreaming(w, r, routerSvc, body, clientFormat, model)
+			resp, usage, err := fwd(req.Context(), body, model)
+			if err != nil {
+				WriteErrorResponse(w, http.StatusServiceUnavailable, NewErrorResponseWithCode(ErrCodeUpstreamFailed, err.Error()))
+				Error("proxy failed", map[string]interface{}{
+					"model": model,
+					"error": err.Error(),
+				})
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(resp)
+
+			Info("request completed", map[string]interface{}{
+				"model":         model,
+				"input_tokens":  usage.InputTokens,
+				"output_tokens": usage.OutputTokens,
+			})
 		}
 	}
 }
 
-// handleStreaming handles streaming requests
-func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc router.RouterService, body []byte, clientFormat provider.Protocol, model string) {
-	result, actualModel, providerURL, err := routerSvc.ForwardStream(r.Context(), body, model, clientFormat)
+// readAndParse reads the request body with size limit and parses model/stream fields.
+func readAndParse(w http.ResponseWriter, r *http.Request) (body []byte, model string, stream bool, ok bool) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxRequestBodySize))
 	if err != nil {
-		WriteErrorResponse(w, http.StatusServiceUnavailable, NewErrorResponseWithCode(ErrCodeUpstreamFailed, err.Error()))
-		Warn("proxy stream failed", map[string]interface{}{
-			"model": model,
-			"error": err.Error(),
-		})
-		return
+		WriteErrorResponse(w, http.StatusBadRequest, NewErrorResponseWithCode(ErrCodeInvalidRequest, err.Error()))
+		return nil, "", false, false
 	}
-	defer result.Close()
+	r.Body.Close()
 
-	// Write SSE headers
+	var meta requestMeta
+	if err := json.Unmarshal(body, &meta); err != nil {
+		WriteErrorResponse(w, http.StatusBadRequest, NewErrorResponseWithCode(ErrCodeInvalidRequest, "invalid JSON body"))
+		return nil, "", false, false
+	}
+	return body, meta.Model, meta.Stream, true
+}
+
+// writeStreamError writes an error response for streaming failures.
+func writeStreamError(w http.ResponseWriter, model string, err error) {
+	WriteErrorResponse(w, http.StatusServiceUnavailable, NewErrorResponseWithCode(ErrCodeUpstreamFailed, err.Error()))
+	Warn("proxy stream failed", map[string]interface{}{
+		"model": model,
+		"error": err.Error(),
+	})
+}
+
+// writeSSE writes SSE headers and streams chunks from the result channel.
+func writeSSE(w http.ResponseWriter, r *http.Request, result *flux.StreamResult) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -79,52 +135,14 @@ func handleStreaming(w http.ResponseWriter, r *http.Request, routerSvc router.Ro
 		return
 	}
 
-	// Read from channel and write SSE
 	for chunk := range result.Ch {
 		w.Write(chunk)
 		flusher.Flush()
 	}
-
-	usage := result.Usage()
-	Info("stream completed", map[string]interface{}{
-		"model":         actualModel,
-		"provider":      providerURL,
-		"input_tokens":  usage.InputTokens,
-		"output_tokens": usage.OutputTokens,
-	})
-
-	// Record usage for streaming request.
-	// Note: usage is recorded after stream completes, so it reflects actual token counts.
-	// If SSE write fails mid-stream, usage may be incomplete but still recorded.
-	routerSvc.RecordStreamUsage(usage, actualModel, providerURL)
-}
-
-// handleNonStreaming handles non-streaming requests
-func handleNonStreaming(w http.ResponseWriter, r *http.Request, routerSvc router.RouterService, body []byte, clientFormat provider.Protocol, model string) {
-	resp, usage, err := routerSvc.Forward(r.Context(), body, model, clientFormat)
-	if err != nil {
-		WriteErrorResponse(w, http.StatusServiceUnavailable, NewErrorResponseWithCode(ErrCodeUpstreamFailed, err.Error()))
-		Error("proxy failed", map[string]interface{}{
-			"model": model,
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// Write response
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(resp)
-
-	Info("request completed", map[string]interface{}{
-		"model":         model,
-		"input_tokens":  usage.InputTokens,
-		"output_tokens": usage.OutputTokens,
-	})
 }
 
 // HandleStatus handles status endpoint
-func HandleStatus(routerSvc router.RouterService) http.HandlerFunc {
+func HandleStatus(routerSvc router.Router) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var statuses []router.ProviderStatus
 		if routerSvc != nil {
@@ -136,7 +154,7 @@ func HandleStatus(routerSvc router.RouterService) http.HandlerFunc {
 }
 
 // HandleHealth handles health endpoint with dependency checks
-func HandleHealth(routerSvc router.RouterService) http.HandlerFunc {
+func HandleHealth(routerSvc router.Router) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		status := "ok"
 		details := make(map[string]interface{})

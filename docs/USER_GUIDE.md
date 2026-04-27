@@ -1,70 +1,292 @@
 # TokRouter 用户手册
 
-## 快速开始
+## 新用户上手指南
 
-### 安装
+按以下步骤快速搭建 LLM API 路由服务：
+
 ```bash
-# 从源码编译
-git clone https://github.com/tokflux/tokrouter.git
-cd tokrouter
-go build -o tokrouter ./cmd/tokrouter
+# 1. 查看可用预置 Provider
+tr list presets
+
+# 2. 添加服务（预置模式：自动填充 BaseURL、Format、默认模型）
+tr add openai --secret sk-xxx
+
+# 3. 查看已配置的服务
+tr list services
+
+# 4. 查看所有可用模型
+tr list models
+
+# 5. 启动路由服务
+tr start
+
+# 6. 查看实时健康状态
+tr show health --watch
+
+# 7. 查看用量统计
+tr show usage
 ```
 
-### 基本配置
-创建 `config.yaml`:
+---
+
+## CLI 命令参考
+
+所有命令均支持 `--config` / `-c` 指定配置文件路径（默认 `./config.yaml`）。
+Shell 补全：`tr completion bash|zsh|fish`
+
+### tr add — 添加服务
+
+添加 API 服务，支持**预置模式**（推荐）和**自定义模式**。
+
+```bash
+# 预置模式：使用内置 Provider 模板
+tr add openai --secret sk-xxx
+tr add deepseek --secret sk-xxx
+tr add openrouter --secret sk-or-xxx
+
+# 指定模型（覆盖预置默认模型）
+tr add openai --secret sk-xxx --model gpt-4 --model gpt-4o
+
+# 自定义模式：完全手动配置
+tr add --name my-api --secret sk-xxx --base-url https://api.example.com/v1 --format openai --model gpt-4
+
+# 交互式模式（无参数，无 --name）
+tr add
+```
+
+| 参数 | 说明 |
+|------|------|
+| `<preset>` | 预置 Provider 名称（如 openai, deepseek, openrouter） |
+| `--name` | 服务名称（自定义模式必需） |
+| `--secret` | API 密钥 |
+| `--base-url` | API 基础 URL（自定义模式） |
+| `--format` | 协议格式：openai/anthropic/gemini/cohere |
+| `--model` | 模型名称（可多次指定，空格分隔） |
+
+### tr remove — 移除服务
+
+```bash
+tr remove <name>
+tr remove openai-1
+```
+
+### tr list — 列出资源
+
+```bash
+# 子命令
+tr list services       # 列出所有已配置的服务
+tr list models         # 列出所有可用模型
+tr list presets        # 列出所有内置 Provider 预置
+tr list assistants     # 列出支持的 AI 助手
+
+# 默认（不带子命令）= tr list services
+tr list
+```
+
+**tr list services 输出示例：**
+```
+Services
+┌──────────────┬────────────┬──────────┬────────┬─────────┐
+│ NAME         │ PROVIDER   │ FORMAT   │ MODELS │ STATUS  │
+├──────────────┼────────────┼──────────┼────────┼─────────┤
+│ openai-main  │ custom     │ openai   │ 2      │ enabled │
+│ deepseek-1   │ deepseek   │ openai   │ 1      │ enabled │
+└──────────────┴────────────┴──────────┴────────┴─────────┘
+```
+
+**tr list models 输出示例：**
+```
+Available Models
+┌─────────────────┬──────────────┬──────────┬──────────┬─────────┐
+│ MODEL           │ SERVICE      │ FORMAT   │ PRIORITY │ STATUS  │
+├─────────────────┼──────────────┼──────────┼──────────┼─────────┤
+│ gpt-4           │ openai-main  │ openai   │ 0        │ enabled │
+│ claude-3-opus   │ anthropic-1  │ anthropic│ 50       │ enabled │
+└─────────────────┴──────────────┴──────────┴──────────┴─────────┘
+```
+
+### tr show — 查看详情
+
+```bash
+# 子命令
+tr show service <name>     # 查看服务详情（模型列表、优先级、别名）
+tr show preset <name>      # 查看预置详情（默认模型、BaseURL、地区）
+tr show config             # 查看当前完整配置
+tr show health             # 查看端点健康状态
+tr show health --watch     # 实时刷新（每 2 秒）
+tr show usage              # 本月用量统计
+tr show usage --today      # 今日用量
+tr show usage --week       # 本周用量
+tr show usage --chart      # 柱状图展示
+tr show usage --export csv > stats.csv   # 导出 CSV
+tr show usage --export json > stats.json # 导出 JSON
+
+# 默认（不带子命令）= tr show config
+tr show
+```
+
+**tr show service 输出示例：**
+```
+Service: openai-main
+  Provider:  openai
+  Format:    openai
+  BaseURL:   https://api.openai.com/v1
+  Status:    enabled
+  Models:    2
+
+  ┌───────────────┬────────┬──────────┐
+  │ NAME          │ ALIAS  │ PRIORITY │
+  ├───────────────┼────────┼──────────┤
+  │ gpt-4         │ -      │ 0        │
+  │ gpt-4o        │ -      │ 0        │
+  └───────────────┴────────┴──────────┘
+```
+
+**tr show health 输出示例：**
+```
+Endpoint Health
+┌──────────────────────────────────┬──────────┬─────────┬────────┐
+│ NAME                             │ PROTOCOL │ HEALTHY │ MODELS │
+├──────────────────────────────────┼──────────┼─────────┼────────┤
+│ https://api.openai.com/v1        │ openai   │ ✓       │ 2/2    │
+│ https://api.anthropic.com/v1     │ anthropic│ ✓       │ 1/1    │
+└──────────────────────────────────┴──────────┴─────────┴────────┘
+```
+
+**tr show usage 输出示例：**
+```
+Usage Summary (month)
+┌────────────────┬────────┬────────┬──────────┬────────────┬─────────┐
+│ SERVICE        │ INPUT  │ OUTPUT │ REQUESTS │ AVG LATENCY│ SUCCESS │
+├────────────────┼────────┼────────┼──────────┼────────────┼─────────┤
+│ openai-main    │ 15234  │ 45678  │ 1234     │ 245ms      │ 98.5%   │
+│ anthropic-1    │ 23456  │ 12345  │ 567      │ 189ms      │ 99.2%   │
+└────────────────┴────────┴────────┴──────────┴────────────┴─────────┘
+```
+
+### tr config — 修改服务配置
+
+```bash
+# 更新 API 密钥
+tr config <name> --secret sk-new-key
+
+# 启用/禁用服务
+tr config <name> --enable
+tr config <name> --disable
+
+# 添加/移除模型
+tr config <name> --add-model gpt-4o
+tr config <name> --add-model my-model --alias gpt-4
+tr config <name> --remove-model gpt-3.5-turbo
+
+# 可以组合多个操作
+tr config <name> --enable --add-model gpt-4o --secret sk-new
+```
+
+### tr assistant — 配置 AI 助手
+
+将 AI 编码助手（Claude Code, Cursor, Aider 等）指向 tokrouter。
+
+```bash
+# 子命令
+tr assistant list                # 列出支持的助手
+tr assistant auto                # 自动检测并配置所有已安装的助手
+tr assistant auto --url http://localhost:9000
+
+# 配置指定助手
+tr assistant claude-code         # 配置 Claude Code
+tr assistant cursor              # 配置 Cursor
+tr assistant aider               # 配置 Aider
+tr assistant windsurf            # 配置 Windsurf
+tr assistant cline               # 配置 Cline
+tr assistant continue            # 配置 Continue
+
+# 指定自定义 URL
+tr assistant claude-code --url http://myhost:8765
+```
+
+### tr start — 启动服务
+
+```bash
+tr start                          # 默认 (127.0.0.1:8765)
+tr start --host 0.0.0.0           # 监听所有接口
+tr start --port 9000              # 自定义端口
+tr start --host 0.0.0.0 --port 9000
+```
+
+启动后服务在**前台运行**，按 `Ctrl+C` 停止。服务端口会写入 `/tmp/tokrouter.port` 供 `tr stop` 读取。
+
+### tr stop — 停止服务
+
+```bash
+tr stop
+```
+
+通过 HTTP `POST /shutdown` 优雅关闭后台运行的 tokrouter。前台运行的服务按 `Ctrl+C` 即可。
+
+---
+
+## 配置详解
+
+### 基础配置
+
 ```yaml
+# config.yaml
+server:
+  host: "127.0.0.1"
+  port: 8765
+
 keys:
   - name: openai-main
     base_url: "https://api.openai.com/v1"
     secret: "${OPENAI_API_KEY}"
-    format: openai
+    format: openai                    # 单协议（向后兼容）
     enabled: true
     models:
       - name: gpt-4
-      - name: gpt-3.5-turbo
+      - name: gpt-4o
 
-  - name: anthropic-main
-    base_url: "https://api.anthropic.com/v1"
-    secret: "${ANTHROPIC_API_KEY}"
-    format: anthropic
+  - name: deepseek-main
+    provider: deepseek              # 预置模板，自动获取 BaseURL、Format、协议列表
+    secret: "${DEEPSEEK_API_KEY}"
     enabled: true
     models:
-      - name: claude-3-opus
+      - name: deepseek-chat
+      - name: deepseek-reasoner
 ```
 
-**说明**：以上配置已足够运行。其他配置项（server、router、stats、log、trace）均有默认值，按需覆盖即可。
+**说明**：以上配置已足够运行。server、router、stats、log、trace 均有默认值，按需覆盖即可。
 
-### 启动服务
-```bash
-./tokrouter serve --config config.yaml
-```
-
-## 配置详解
-
-### 必需配置
-
-**keys** - API 密钥配置（必需，至少一个）
+### 必需配置 — keys
 
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
-| name | string | ✓ | Key 标识 |
-| base_url | string | ✓ | API 基础 URL |
-| secret | string | ✓ | API 密钥（支持环境变量 `${VAR}`） |
-| format | string | ✓ | 协议格式: openai/anthropic/gemini/cohere |
+| name | string | ✓ | 服务标识 |
+| provider | string | - | 预置 Provider 标识（如 openai, deepseek）。设置后 BaseURL、Format、协议列表自动从预置获取 |
+| base_url | string | - | API 基础 URL（自定义服务必需，预置模式自动填充） |
+| secret | string | ✓ | API 密钥（支持 `${VAR}` 环境变量） |
+| format | string | - | 单协议：openai/anthropic/gemini/cohere（预置模式自动填充） |
 | enabled | bool | - | 是否启用（默认 true） |
-| models | []ModelConfig | ✓ | 支持的模型列表（至少一个） |
+| models | []ModelConfig | ✓ | 模型列表（至少一个） |
 
-**Model 配置**
+**协议列表说明：**
+- 协议列表由 Provider 预置决定，不需在 KeyConfig 中单独配置
+- DeepSeek、OpenRouter 等预置已声明 `Protocols: [openai, anthropic]`
+- 自定义服务（无 provider）使用 `format` 单协议
+- `/v1/chat/completions` 入口使用 OpenAI 协议处理
+- `/v1/messages` 入口使用 Anthropic 协议处理
+
+**Model 配置：**
 
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
 | name | string | ✓ | 模型名称 |
-| alias | string | - | 模型别名（将请求模型名映射到实际模型名） |
+| alias | string | - | 模型别名（请求模型名映射到实际模型名） |
 | priority | int64 | - | 端点优先级（越低越优先，默认 0） |
 
 ### 可选配置（均有默认值）
 
-**Server 配置**
+**Server：**
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
@@ -73,7 +295,7 @@ keys:
 | tls_cert | "" | TLS 证书路径 |
 | tls_key | "" | TLS 密钥路径 |
 
-**Router 配置**
+**Router：**
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
@@ -81,230 +303,186 @@ keys:
 | retry.timeout | "30s" | 请求超时 |
 | retry.backoff | "exponential" | 退避策略 |
 
-**Stats 配置**
+**Stats：**
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| enabled | true | 是否启用统计 |
-| db_path | "./data/usage.db" | 数据库路径 |
+| enabled | true | 是否启用用量统计 |
+| db_path | "./data/usage.db" | 统计数据库路径 |
 
-**Log 配置**
+**Log：**
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| level | "info" | 日志级别 (debug/info/warn/error) |
-| format | "json" | 日志格式 (json/text) |
+| level | "info" | 日志级别：debug/info/warn/error |
+| format | "json" | 日志格式：json/text |
 | output | "stdout" | 输出位置 |
 
-**Trace 配置**
+**Trace：**
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| enabled | true | 是否启用追踪 |
-| header | "x-request-id" | 追踪请求头 |
+| enabled | true | 是否启用链路追踪 |
+| header | "x-request-id" | 追踪请求头字段名 |
 
-## CLI 命令
-
-### tokrouter init
-交互式配置向导，包含输入验证和配置确认步骤：
-```bash
-./tokrouter init
-```
-
-新功能：
-- 端口范围验证（1-65535）
-- URL 格式验证
-- 配置摘要显示
-- 保存前确认步骤
-- 按 Ctrl+C 可随时取消
-
-### tokrouter serve
-启动服务器
-```bash
-./tokrouter serve                   # 默认配置 (127.0.0.1:8765)
-./tokrouter serve --host 0.0.0.0    # 监听所有接口
-./tokrouter serve --port 9000       # 自定义端口
-```
-
-### tokrouter status
-查看 Key 状态
-```bash
-./tokrouter status              # 显示当前状态
-./tokrouter status --watch      # 实时刷新（每 2 秒）
-```
-
-### tokrouter models
-列出所有可用模型（新命令）：
-```bash
-./tokrouter models
-```
-
-输出示例：
-```
-Available Models
-┌─────────────────┬────────────┬──────────┬──────────┬─────────┐
-│ MODEL           │ PROVIDER   │ FORMAT   │ PRIORITY │ STATUS  │
-├─────────────────┼────────────┼──────────┼──────────┼─────────┤
-│ gpt-4           │ openai     │ openai   │ 0        │ enabled │
-│ claude-3-opus   │ anthropic  │ anthropic│ 50       │ enabled │
-└─────────────────┴────────────┴──────────┴──────────┴─────────┘
-```
-
-### tokrouter keys
-管理 API 密钥
-```bash
-./tokrouter keys                 # 列出所有密钥
-./tokrouter keys list            # 同上
-./tokrouter keys add             # 添加密钥（交互式模式）
-./tokrouter keys add --name my-key --format openai --secret $KEY --base-url https://api.example.com/v1  # 非交互式
-./tokrouter keys remove <name>   # 删除密钥
-./tokrouter keys enable <name>   # 启用密钥
-./tokrouter keys disable <name>  # 禁用密钥
-./tokrouter keys ping <name>     # 测试密钥连通性（显示延迟和测试汇总）
-```
-
-`keys ping` 输出改进：
-```
-Testing key 'openai-main'...
-  Format:  openai
-  BaseURL: https://api.openai.com/v1
-
-  Testing model 'gpt-4'... ✓ OK (245ms)
-  Testing model 'gpt-3.5-turbo'... ✓ OK (189ms)
-
-Summary: 2 passed, 0 failed
-```
-
-### tokrouter summary
-查看使用统计（含平均延迟和成功率）
-```bash
-./tokrouter summary             # 本月统计
-./tokrouter summary --today     # 今日统计
-./tokrouter summary --week      # 本周统计
-./tokrouter summary --chart     # 显示 ASCII 图表
-./tokrouter summary --export csv > stats.csv
-./tokrouter summary --export json > stats.json
-```
-
-输出示例：
-```
-Usage Summary (month)
-┌────────────────┬───────┬────────┬──────────┬────────────┬─────────┐
-│ KEY            │ INPUT │ OUTPUT │ REQUESTS │ AVG LATENCY│ SUCCESS │
-├────────────────┼───────┼────────┼──────────┼────────────┼─────────┤
-│ openai-main    │ 15234 │ 45678  │ 1234     │ 245ms      │ 98.5%   │
-│ anthropic-main │ 23456 │ 12345  │ 567      │ 189ms      │ 99.2%   │
-└────────────────┴───────┴────────┴──────────┴────────────┴─────────┘
-```
-
-### tokrouter config
-显示当前配置
-```bash
-./tokrouter config
-```
+---
 
 ## 使用场景
 
-### 负载均衡
-配置多个相同模型的端点，自动轮询:
+### 预设快速添加
+
+62+ 内置 Provider 预置，自动填充 BaseURL 和默认模型：
+
+```bash
+tr list presets                # 浏览预置列表
+tr add openai --secret sk-xxx
+tr add deepseek --secret sk-xxx
+tr add openrouter --secret sk-or-xxx
+```
+
+### 多协议支持
+
+DeepSeek、OpenRouter 等 Provider 同时支持 OpenAI 和 Anthropic 协议，预置模板已声明协议列表，无需手动配置：
+
 ```yaml
 keys:
-  - name: "openai-1"
+  - name: deepseek
+    provider: deepseek          # 预置已含 protocols: [openai, anthropic]
+    secret: "${DEEPSEEK_API_KEY}"
+    enabled: true
+    models:
+      - name: deepseek-chat
+```
+
+此时：
+- `POST /v1/chat/completions` → OpenAI 格式直传 DeepSeek
+- `POST /v1/messages` → Anthropic 请求翻译为 OpenAI 格式发往 DeepSeek
+
+### 负载均衡
+
+配置多个相同模型的端点，按优先级自动轮询：
+
+```yaml
+keys:
+  - name: openai-1
     base_url: "https://api.openai.com/v1"
     secret: "sk-xxx1"
-    format: "openai"
-    enabled: true
+    format: openai
     models:
-      - name: "gpt-4"
-        priority: 100
-  - name: "openai-2"
+      - name: gpt-4
+        priority: 100       # 优先使用
+  - name: openai-2
     base_url: "https://api.openai.com/v1"
     secret: "sk-xxx2"
-    format: "openai"
-    enabled: true
+    format: openai
     models:
-      - name: "gpt-4"
-        priority: 200  # Higher priority = less preferred
+      - name: gpt-4
+        priority: 200       # 次选
 ```
 
 ### 故障转移
-当某个端点失败时，自动切换到其他端点。熔断器会在连续失败 3 次后暂时屏蔽端点，60 秒后自动恢复。
 
-### 成本监控
-启用统计后，使用 summary 命令查看各提供者的使用量和成本:
-```bash
-./tokrouter summary --chart
-```
-
-### 协议转换
-使用 Anthropic SDK 调用 OpenAI 后端:
-```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:8765
-claude  # Claude Code 会自动使用 tokrouter
-```
-
-使用 OpenAI SDK 调用 Anthropic 后端:
-```bash
-export OPENAI_API_BASE=http://127.0.0.1:8765/v1
-aider --model gpt-4
-```
-
-### 模型级路由
-请求只路由到匹配模型的端点。配置多个模型时，请求会自动路由到对应模型的端点。
+某个端点连续失败 3 次后自动熔断，60 秒后恢复。同时自动切换到健康的备用端点。
 
 ### 模型别名
-将请求模型名映射到实际模型名:
+
+将请求模型名映射到实际模型名：
+
 ```yaml
 keys:
-  - name: "openai"
+  - name: openai
     models:
-      - name: "gpt-4-turbo"
-        alias: "gpt-4-1106-preview"  # 请求 gpt-4-turbo → 实际用 gpt-4-1106-preview
-        priority: 50
+      - name: gpt-4-1106-preview
+        alias: gpt-4-turbo    # 请求 gpt-4-turbo → 实际调 gpt-4-1106-preview
+```
+
+### 延迟感知路由
+
+端点选择策略：
+1. 优先级优先（低优先级优先）
+2. 同优先级按 EWMA 延迟（近期延迟权重更高）选择最快端点
+
+### AI 助手集成
+
+将 tokrouter 设置为 AI 编码助手的 API 代理：
+
+```bash
+# 自动检测并配置所有已安装的 AI 助手
+tr assistant auto
+
+# 或手动配置单个
+tr assistant claude-code
+tr assistant cursor
+tr assistant aider
 ```
 
 ### 热重载
-无需重启即可重载配置:
+
+无需重启即可重载配置：
+
 ```bash
 kill -SIGHUP $(pidof tokrouter)
 ```
 
-### 延迟感知路由
-端点选择策略：
-1. 优先级优先（低优先级优先）
-2. 优先级相同时，按 EWMA 延迟选择（近期延迟权重更高）
+或在运行 `tr start` 的终端中按 `Ctrl+C`，修改配置后重新 `tr start`。
 
-自动避开响应慢的端点。
+### 成本监控
 
-## 故障排查
-
-### 日志级别
-```yaml
-log:
-  level: "debug"  # debug/info/warn/error
-  format: "json"  # json/text
-  output: "stdout"
+```bash
+tr show usage --today          # 今日用量
+tr show usage --week           # 本周用量
+tr show usage --chart          # 柱状图
+tr show usage --export csv > stats.csv
 ```
 
-### 常见错误
+---
 
-| 错误 | 原因 | 解决方案 |
-|------|------|----------|
-| connection refused | 服务未启动 | 检查 serve 命令输出 |
-| invalid API key | 密钥无效 | 检查 key.secret |
-| timeout | 上游响应慢 | 增加 retry.timeout |
-| no healthy endpoints | 所有端点不可用 | 检查网络和密钥 |
-| config invalid: no keys | 未配置密钥 | 添加 keys 配置 |
+## API 端点
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/v1/chat/completions` | POST | OpenAI 兼容聊天接口 |
+| `/v1/messages` | POST | Anthropic 兼容消息接口 |
+| `/status` | GET | 端点运行时状态 |
+| `/health` | GET | 健康检查（含依赖状态） |
+| `/shutdown` | POST | 优雅关闭服务器 |
 
 ### 健康检查
+
 ```bash
 curl http://localhost:8765/health
 curl http://localhost:8765/status
 ```
 
-### 调试模式
-```bash
-# 设置日志级别
+### 错误类型
+
+| 类型 | HTTP | 说明 |
+|------|------|------|
+| invalid_request_error | 400 | 请求格式错误 |
+| upstream_error | 503 | 上游服务不可用 |
+| internal_error | 500 | 内部错误 |
+
+---
+
+## 故障排查
+
+| 错误 | 原因 | 解决方案 |
+|------|------|----------|
+| connection refused | 服务未启动 | `tr start` 启动服务 |
+| invalid API key | 密钥无效 | `tr config <name> --secret sk-correct` |
+| timeout | 上游响应慢 | 增加 config.yaml 中 `retry.timeout` |
+| no healthy endpoints | 所有端点不可用 | `tr show health` 检查状态 |
+| config invalid: no keys | 未配置服务 | `tr add` 添加服务 |
+
+调试模式：
+
+```yaml
 log:
   level: "debug"
+```
+
+```bash
+tr show health --watch           # 实时监控端点健康
+tr show service <name>           # 检查特定服务配置
+tr show config                   # 检查完整配置
 ```

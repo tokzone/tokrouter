@@ -22,7 +22,7 @@ keys:
     secret: "${OPENAI_API_KEY}"
 
 # 启动
-tokrouter serve
+tr start
 # 网关就绪：http://127.0.0.1:8765
 ```
 
@@ -154,14 +154,14 @@ keys:
     secret: "${DEEPSEEK_API_KEY}"
 EOF
 
-tokrouter serve
+tr start
 ```
 
 **或使用交互式初始化：**
 
 ```bash
-tokrouter init  # 交互式配置向导
-tokrouter serve
+tr add       # 交互式：添加服务（预设或自定义）
+tr start
 ```
 
 ---
@@ -354,36 +354,46 @@ anthropic-main 23456      12345     567        189ms        99.2%
 ## CLI 命令
 
 ```bash
-tokrouter init                       # 交互式配置向导
-tokrouter serve                      # 启动服务器 (127.0.0.1:8765)
-tokrouter serve --host 0.0.0.0       # 监听所有接口
+# 快速开始
+tr add openai --secret sk-xxx        # 使用预设添加服务
+tr start                             # 启动服务器 127.0.0.1:8765
+tr start --port 8080                 # 自定义端口
 
-# 新增：服务管理
-tokrouter add <provider>             # 使用预设添加服务（交互式）
-tokrouter list services              # 列出所有已配置服务
-tokrouter list assistants            # 列出支持的 AI 助手
-tokrouter show <service>             # 显示服务详情
-tokrouter remove <service>           # 删除服务
-tokrouter start                      # 启动 tokrouter 守护进程
-tokrouter stop                       # 停止 tokrouter 守护进程
+# 服务管理
+tr add                               # 交互式：选择预设或自定义
+tr add deepseek --secret sk-xxx      # 预设模式，自动填充配置
+tr add --name my --base-url ... --format openai --secret sk-xxx --model gpt-4
+tr remove <name>                     # 删除服务
+tr config <name> --enable            # 启用/禁用服务
+tr config <name> --secret sk-new     # 更新 API 密钥
+tr config <name> --add-model gpt-4   # 添加模型到服务
+tr config <name> --remove-model old  # 从服务移除模型
 
-# 新增：配置管理
-tokrouter config service <name> --enable/--disable/--secret/--add-model/--remove-model
-tokrouter config assistant <name>    # 配置 AI 助手使用 tokrouter
-tokrouter config assistant --auto    # 自动配置所有已安装的助手
+# 查看信息
+tr list services                     # 列出所有服务（默认）
+tr list models                       # 列出所有可用模型
+tr list presets                      # 列出提供者预设（26 个内置）
+tr list assistants                   # 列出支持的 AI 工具
+tr show service <name>               # 服务详情
+tr show preset <name>                # 预设详情
+tr show config                       # 当前配置
+tr show health                       # 端点健康状态
+tr show health --watch               # 实时刷新（2 秒）
+tr show usage --month                # 月度用量统计
+tr show usage --chart                # Token 分布图
+tr show usage --export csv           # 导出 CSV
 
-# 状态监控
-tokrouter status                     # 查看密钥状态
-tokrouter status --watch             # 实时刷新
-tokrouter models                     # 列出所有可用模型
-tokrouter keys                       # 列出所有密钥（旧命令）
-tokrouter keys ping <name>           # 测试连通性
-tokrouter summary --month            # 月度统计
-tokrouter summary --chart            # ASCII 图表
+# AI 助手集成
+tr assistant list                    # 列出支持的 AI 工具
+tr assistant auto                    # 自动检测并配置所有
+tr assistant cursor                  # 配置指定工具
 
-# OpenAPI 文档（新增）
-curl http://localhost:8765/openapi.yaml  # OpenAPI 规范
-curl http://localhost:8765/docs          # Swagger UI
+# 服务器生命周期
+tr start [--host HOST] [--port PORT] # 启动服务器
+tr stop                              # 优雅关闭服务器
+
+# Shell 补全
+tr completion bash|zsh|fish          # 生成补全脚本
 ```
 
 ---
@@ -548,13 +558,13 @@ git clone https://github.com/tokflux/tokrouter.git
 cd tokrouter
 go build ./cmd/tokrouter
 
-tokrouter init
-tokrouter serve
+tr add
+tr start
 ```
 
 **下一步：**
 1. Star 本仓库
-2. 运行 `tokrouter init` 配置
+2. 运行 `tr add` 配置
 3. 将 AI 工具指向 `http://127.0.0.1:8765`
 
 ---

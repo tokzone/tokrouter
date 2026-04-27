@@ -2,12 +2,28 @@
 
 ## 端点概览
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| /v1/chat/completions | POST | OpenAI 兼容聊天接口 |
-| /v1/messages | POST | Anthropic 兼容消息接口 |
-| /status | GET | Key 状态 |
-| /health | GET | 健康检查（含依赖状态）
+TokRouter 提供两个协议的 API 入口，分别处理不同协议格式的请求。
+
+| 端点 | 方法 | 说明 | 协议 |
+|------|------|------|------|
+| /v1/chat/completions | POST | OpenAI 兼容聊天接口 | OpenAI |
+| /v1/messages | POST | Anthropic 兼容消息接口 | Anthropic |
+| /status | GET | 端点运行时状态 | - |
+| /health | GET | 健康检查（含依赖状态） | - |
+| /shutdown | POST | 优雅关闭服务器 | - |
+
+---
+
+## 多协议架构
+
+TokRouter 根据 **URL 路径** 决定输入协议：
+
+- `POST /v1/chat/completions` → **输入协议 = OpenAI**。调用 `ForwardOpenAI`。
+- `POST /v1/messages` → **输入协议 = Anthropic**。调用 `ForwardAnthropic`。
+
+每个 Endpoint 声明其**协议能力列表** (`protocols`)。路由时：
+- 若 endpoint 支持输入协议 → **直传**（无转换）
+- 若 endpoint 不支持输入协议 → 回退到 `protocols[0]`，自动进行协议转换
 
 ---
 
@@ -148,7 +164,7 @@ curl -X POST http://localhost:8765/v1/messages \
 
 ## GET /status
 
-返回所有提供者的运行时状态。
+返回所有 Provider 的运行时状态。
 
 ### 响应
 
@@ -165,6 +181,13 @@ curl -X POST http://localhost:8765/v1/messages \
   }
 ]
 ```
+
+| 字段 | 说明 |
+|------|------|
+| name | Provider 的 BaseURL |
+| protocol | 默认协议（protocols[0]） |
+| healthy | 至少一个模型健康则为 true |
+| models | 各模型的健康状态 |
 
 ### curl 示例
 
@@ -183,7 +206,7 @@ curl http://localhost:8765/status
 ```json
 {
   "status": "ok",
-  "version": "v0.6.0",
+  "version": "v0.7.0",
   "details": {
     "endpoints": {"total": 2, "healthy": 2},
     "usage": "ok"
@@ -198,7 +221,7 @@ curl http://localhost:8765/status
 ```json
 {
   "status": "degraded",
-  "version": "v0.6.0",
+  "version": "v0.7.0",
   "details": {
     "endpoints": {"total": 2, "healthy": 0},
     "usage": "ok"
@@ -210,6 +233,24 @@ curl http://localhost:8765/status
 
 ```bash
 curl http://localhost:8765/health
+```
+
+---
+
+## POST /shutdown
+
+优雅关闭 tokrouter 服务器。
+
+### 响应
+
+```
+200 OK
+```
+
+### curl 示例
+
+```bash
+curl -X POST http://localhost:8765/shutdown
 ```
 
 ---

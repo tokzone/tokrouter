@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 
 // Helper functions for test data construction
 func newTestProvider() *provider.Provider {
-	return provider.NewProvider(1, "https://api.example.com", provider.ProtocolOpenAI)
+	return provider.NewProvider(1, "https://api.example.com")
 }
 
 func newTestAPIKey(prov *provider.Provider) *flux.APIKey {
@@ -22,35 +23,76 @@ func newTestAPIKey(prov *provider.Provider) *flux.APIKey {
 }
 
 func newTestUserEndpoint(prov *provider.Provider, model string, priority int64) *flux.UserEndpoint {
-	endpoint.RegisterEndpoint(1, prov, model)
+	endpoint.RegisterEndpoint(1, prov, model, []provider.Protocol{provider.ProtocolOpenAI})
 	k := newTestAPIKey(prov)
 	ue, _ := flux.NewUserEndpoint(model, k, priority)
 	return ue
 }
 
-func setupTestService(model string) *Service {
+func setupTestRouter(model string) *router {
 	endpoint.GlobalRegistry().Clear()
 	prov := newTestProvider()
 	ue := newTestUserEndpoint(prov, model, 0)
-	return NewService([]*flux.UserEndpoint{ue}, nil, 2, nil)
+	return New([]*flux.UserEndpoint{ue}, nil, 2, nil, nil, nil).(*router)
 }
 
-func newTestService(userEndpoints []*flux.UserEndpoint) *Service {
-	return NewService(userEndpoints, nil, 2, nil)
+func newTestRouter(userEndpoints []*flux.UserEndpoint) *router {
+	return New(userEndpoints, nil, 2, nil, nil, nil).(*router)
 }
 
-func TestNewService(t *testing.T) {
+func TestNewRouter(t *testing.T) {
 	endpoint.GlobalRegistry().Clear()
 	prov := newTestProvider()
 	ue := newTestUserEndpoint(prov, "gpt-4", 10000)
 	userEndpoints := []*flux.UserEndpoint{ue}
 
-	svc := NewService(userEndpoints, nil, 2, nil)
+	svc := New(userEndpoints, nil, 2, nil, nil, nil)
 	if svc == nil {
-		t.Fatal("Service is nil")
+		t.Fatal("Router is nil")
 	}
 }
 
+func TestResolveAlias(t *testing.T) {
+	tests := []struct {
+		name     string
+		model    string
+		body     []byte
+		aliases  map[string]string
+		wantModel string
+	}{
+		{
+			name:     "no alias match",
+			model:    "gpt-4",
+			body:     []byte(`{"model": "gpt-4"}`),
+			aliases:  map[string]string{},
+			wantModel: "gpt-4",
+		},
+		{
+			name:     "alias resolved",
+			model:    "4o",
+			body:     []byte(`{"model": "4o"}`),
+			aliases:  map[string]string{"4o": "gpt-4o"},
+			wantModel: "gpt-4o",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model, body := resolveAlias(tt.model, tt.body, tt.aliases)
+			if model != tt.wantModel {
+				t.Errorf("model = %q, want %q", model, tt.wantModel)
+			}
+			if tt.aliases != nil && len(tt.aliases) > 0 {
+				var req map[string]interface{}
+				if err := json.Unmarshal(body, &req); err == nil {
+					if req["model"] != tt.wantModel {
+						t.Errorf("body model = %v, want %v", req["model"], tt.wantModel)
+					}
+				}
+			}
+		})
+	}
+}
 
 func TestRewriteModelInRequest(t *testing.T) {
 	tests := []struct {
@@ -111,12 +153,12 @@ func TestProviderStatuses(t *testing.T) {
 	// Clear registry
 	endpoint.GlobalRegistry().Clear()
 
-	prov1 := provider.NewProvider(1, "https://api.openai.com", provider.ProtocolOpenAI)
-	prov2 := provider.NewProvider(2, "https://api.anthropic.com", provider.ProtocolAnthropic)
+	prov1 := provider.NewProvider(1, "https://api.openai.com")
+	prov2 := provider.NewProvider(2, "https://api.anthropic.com")
 
-	ep1, _ := endpoint.NewEndpoint(1, prov1, "gpt-4")
-	ep2, _ := endpoint.NewEndpoint(2, prov1, "gpt-3.5-turbo")
-	ep3, _ := endpoint.NewEndpoint(3, prov2, "claude-3")
+	ep1, _ := endpoint.NewEndpoint(1, prov1, "gpt-4", []provider.Protocol{provider.ProtocolOpenAI})
+	ep2, _ := endpoint.NewEndpoint(2, prov1, "gpt-3.5-turbo", []provider.Protocol{provider.ProtocolOpenAI})
+	ep3, _ := endpoint.NewEndpoint(3, prov2, "claude-3", []provider.Protocol{provider.ProtocolAnthropic})
 
 	endpoint.GlobalRegistry().Register(ep1)
 	endpoint.GlobalRegistry().Register(ep2)
@@ -130,7 +172,7 @@ func TestProviderStatuses(t *testing.T) {
 	ue3, _ := flux.NewUserEndpoint("claude-3", k2, 10000)
 	userEndpoints := []*flux.UserEndpoint{ue1, ue2, ue3}
 
-	svc := NewService(userEndpoints, nil, 2, nil)
+	svc := New(userEndpoints, nil, 2, nil, nil, nil)
 	statuses := svc.ProviderStatuses()
 
 	if len(statuses) != 2 {
@@ -165,7 +207,7 @@ func TestReloadFailurePreservesState(t *testing.T) {
 	ue := newTestUserEndpoint(prov, "gpt-4", 10000)
 	userEndpoints := []*flux.UserEndpoint{ue}
 
-	svc := newTestService(userEndpoints)
+	svc := newTestRouter(userEndpoints)
 
 	invalidCfg := &config.Config{
 		Keys: []config.KeyConfig{
@@ -178,16 +220,16 @@ func TestReloadFailurePreservesState(t *testing.T) {
 	}
 
 	svc.mu.RLock()
-	_, ok := svc.state.clients["gpt-4"]
+	_, ok := svc.ctx.openAIDoFuncs["gpt-4"]
 	svc.mu.RUnlock()
 
 	if !ok {
-		t.Error("Clients should still contain gpt-4 after failed reload")
+		t.Error("DoFuncs should still contain gpt-4 after failed reload")
 	}
 }
 
 func TestRecordStreamUsageNilInputs(t *testing.T) {
-	svc := newTestService(nil)
+	svc := newTestRouter(nil)
 
 	svc.RecordStreamUsage(nil, "gpt-4", "https://api.example.com")
 	svc.RecordStreamUsage(nil, "", "")
@@ -199,7 +241,7 @@ func TestReload(t *testing.T) {
 	ue := newTestUserEndpoint(prov, "gpt-4", 10000)
 	userEndpoints := []*flux.UserEndpoint{ue}
 
-	svc := newTestService(userEndpoints)
+	svc := newTestRouter(userEndpoints)
 
 	cfg := &config.Config{
 		Keys: []config.KeyConfig{
@@ -222,39 +264,54 @@ func TestReload(t *testing.T) {
 	}
 
 	svc.mu.RLock()
-	_, ok1 := svc.state.clients["gpt-3.5-turbo"]
-	_, ok2 := svc.state.clients["gpt-4"]
+	_, ok1 := svc.ctx.openAIDoFuncs["gpt-3.5-turbo"]
+	_, ok2 := svc.ctx.openAIDoFuncs["gpt-4"]
 	svc.mu.RUnlock()
 
 	if !ok1 {
-		t.Error("Clients should contain gpt-3.5-turbo after reload")
+		t.Error("DoFuncs should contain gpt-3.5-turbo after reload")
 	}
 	if ok2 {
-		t.Error("Clients should not contain gpt-4 after reload")
+		t.Error("DoFuncs should not contain gpt-4 after reload")
 	}
 }
 
-func TestForward(t *testing.T) {
+func TestForwardOpenAI(t *testing.T) {
 	endpoint.GlobalRegistry().Clear()
 	prov := newTestProvider()
 	ue := newTestUserEndpoint(prov, "gpt-4", 0)
-	svc := newTestService([]*flux.UserEndpoint{ue})
+	svc := newTestRouter([]*flux.UserEndpoint{ue})
 
 	req := []byte(`{"model": "unknown-model", "messages": []}`)
-	_, _, err := svc.Forward(nil, req, "unknown-model", provider.ProtocolOpenAI)
+	_, _, err := svc.ForwardOpenAI(context.Background(), req, "unknown-model")
 	if err == nil {
 		t.Error("expected error for unknown model")
 	}
 }
 
-func TestForwardStream(t *testing.T) {
+func TestForwardAnthropic(t *testing.T) {
+	endpoint.GlobalRegistry().Clear()
+	prov := provider.NewProvider(1, "https://api.example.com")
+	endpoint.RegisterEndpoint(1, prov, "claude-3", []provider.Protocol{provider.ProtocolAnthropic})
+	k, _ := flux.NewAPIKey(prov, "test-key")
+	ue, _ := flux.NewUserEndpoint("claude-3", k, 0)
+	svc := newTestRouter([]*flux.UserEndpoint{ue})
+
+	req := []byte(`{"model": "unknown-model", "messages": []}`)
+	_, _, err := svc.ForwardAnthropic(context.Background(), req, "unknown-model")
+	if err == nil {
+		t.Error("expected error for unknown model")
+	}
+}
+
+func TestForwardStreamOpenAI(t *testing.T) {
 	endpoint.GlobalRegistry().Clear()
 	prov := newTestProvider()
 	ue := newTestUserEndpoint(prov, "gpt-4", 0)
-	svc := newTestService([]*flux.UserEndpoint{ue})
+	svc := newTestRouter([]*flux.UserEndpoint{ue})
 
 	req := []byte(`{"model": "unknown-model", "messages": []}`)
-	_, _, _, err := svc.ForwardStream(nil, req, "unknown-model", provider.ProtocolOpenAI)
+	_, _, _, err := svc.ForwardStreamOpenAI(context.Background(), req, "unknown-model")
 	if err == nil {
 		t.Error("expected error for unknown model")
 	}
@@ -264,14 +321,14 @@ func TestServerConfig(t *testing.T) {
 	endpoint.GlobalRegistry().Clear()
 	prov := newTestProvider()
 	ue := newTestUserEndpoint(prov, "gpt-4", 0)
-	svc := newTestService([]*flux.UserEndpoint{ue})
+	svc := newTestRouter([]*flux.UserEndpoint{ue})
 
 	cfg := svc.ServerConfig()
 	if cfg.Port != 8765 {
 		t.Errorf("default port = %d, want 8765", cfg.Port)
 	}
 
-	// Service with config
+	// Router with config
 	fullCfg := &config.Config{
 		Server: config.ServerConfig{Port: 9000, Host: "0.0.0.0"},
 		Keys: []config.KeyConfig{
@@ -280,9 +337,9 @@ func TestServerConfig(t *testing.T) {
 		},
 		Log: config.LogConfig{Level: "info"},
 	}
-	svc2, err := NewServiceFromConfig(fullCfg)
+	svc2, err := NewFromConfig(fullCfg)
 	if err != nil {
-		t.Fatalf("NewServiceFromConfig failed: %v", err)
+		t.Fatalf("NewFromConfig failed: %v", err)
 	}
 	defer svc2.Close()
 
@@ -299,7 +356,7 @@ func TestStats(t *testing.T) {
 	endpoint.GlobalRegistry().Clear()
 	prov := newTestProvider()
 	ue := newTestUserEndpoint(prov, "gpt-4", 0)
-	svc := newTestService([]*flux.UserEndpoint{ue})
+	svc := newTestRouter([]*flux.UserEndpoint{ue})
 
 	_, err := svc.Stats(usage.QueryFilter{})
 	if err != usage.ErrDisabled {
@@ -311,7 +368,7 @@ func TestClose(t *testing.T) {
 	endpoint.GlobalRegistry().Clear()
 	prov := newTestProvider()
 	ue := newTestUserEndpoint(prov, "gpt-4", 0)
-	svc := newTestService([]*flux.UserEndpoint{ue})
+	svc := newTestRouter([]*flux.UserEndpoint{ue})
 
 	if err := svc.Close(); err != nil {
 		t.Errorf("Close failed: %v", err)
@@ -319,8 +376,6 @@ func TestClose(t *testing.T) {
 }
 
 func TestAliasMapping(t *testing.T) {
-	endpoint.GlobalRegistry().Clear()
-
 	cfg := &config.Config{
 		Keys: []config.KeyConfig{
 			{
@@ -338,29 +393,21 @@ func TestAliasMapping(t *testing.T) {
 		Log:    config.LogConfig{Level: "info"},
 	}
 
-	svc, err := NewServiceFromConfig(cfg)
+	svc, err := NewFromConfig(cfg)
 	if err != nil {
-		t.Fatalf("NewServiceFromConfig failed: %v", err)
+		t.Fatalf("NewFromConfig failed: %v", err)
 	}
 	defer svc.Close()
 
+	// Test alias resolution
 	req := []byte(`{"model": "gpt-4-turbo", "messages": []}`)
-	client, model, providerURL, modifiedReq, err := svc.prepareRequest(req, "gpt-4-turbo")
-	if err != nil {
-		t.Fatalf("prepareRequest failed: %v", err)
-	}
-	if client == nil {
-		t.Error("client is nil")
-	}
+	model, body := resolveAlias("gpt-4-turbo", req, cfg.AliasMap())
 	if model != "gpt-4-1106-preview" {
 		t.Errorf("model = %s, want gpt-4-1106-preview", model)
 	}
-	if providerURL != "https://api.example.com" {
-		t.Errorf("providerURL = %s, want https://api.example.com", providerURL)
-	}
 
 	var modified map[string]interface{}
-	if err := json.Unmarshal(modifiedReq, &modified); err != nil {
+	if err := json.Unmarshal(body, &modified); err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 	if modified["model"] != "gpt-4-1106-preview" {

@@ -59,7 +59,7 @@ func runListServices(c *cli.Command) error {
 	if len(cfg.Keys) == 0 {
 		pterm.Info.Println("No services configured")
 		pterm.Println("\nAdd a service:")
-		pterm.Println("  tr add service openai --secret sk-xxx")
+		pterm.Println("  tr add openai --secret sk-xxx")
 		return nil
 	}
 
@@ -148,8 +148,8 @@ func runListPresets(c *cli.Command) error {
 
 	pterm.Println()
 	pterm.Info.Println("Add a service using preset:")
-	pterm.Println("  tr add service openai --secret sk-xxx")
-	pterm.Println("  tr add service deepseek --secret sk-xxx")
+	pterm.Println("  tr add openai --secret sk-xxx")
+	pterm.Println("  tr add deepseek --secret sk-xxx")
 	return nil
 }
 
@@ -176,7 +176,7 @@ func runListAssistants(c *cli.Command) error {
 
 	pterm.Println()
 	pterm.Info.Println("Configure an assistant:")
-	pterm.Println("  tr config assistant cursor")
-	pterm.Println("  tr config assistant --auto  # auto-detect and configure all")
+	pterm.Println("  tr assistant cursor")
+	pterm.Println("  tr assistant auto  # auto-detect and configure all")
 	return nil
 }

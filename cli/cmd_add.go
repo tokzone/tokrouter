@@ -13,54 +13,44 @@ import (
 
 var addCmd = &cli.Command{
 	Name:  "add",
-	Usage: "Add a service (provider)",
-	Commands: []*cli.Command{
-		{
-			Name:  "service",
-			Usage: "Add a service by preset name or custom config",
-			Flags: []cli.Flag{
-				&cli.StringFlag{
-					Name:  "secret",
-					Usage: "API key secret",
-				},
-				&cli.StringFlag{
-					Name:  "base-url",
-					Usage: "API base URL (for custom service)",
-				},
-				&cli.StringFlag{
-					Name:  "format",
-					Usage: "API format (openai/anthropic/gemini/cohere)",
-				},
-				&cli.StringFlag{
-					Name:  "name",
-					Usage: "Service name (for custom service)",
-				},
-				&cli.StringSliceFlag{
-					Name:  "model",
-					Usage: "Models to add (can specify multiple)",
-				},
-			},
-			Action: func(ctx context.Context, cmd *cli.Command) error {
-				return runAddService(cmd)
-			},
+	Usage: "Add a service by preset name or custom config",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:  "secret",
+			Usage: "API key secret",
+		},
+		&cli.StringFlag{
+			Name:  "base-url",
+			Usage: "API base URL (for custom service)",
+		},
+		&cli.StringFlag{
+			Name:  "format",
+			Usage: "API format (openai/anthropic/gemini/cohere)",
+		},
+		&cli.StringFlag{
+			Name:  "name",
+			Usage: "Service name (for custom service)",
+		},
+		&cli.StringSliceFlag{
+			Name:  "model",
+			Usage: "Models to add (can specify multiple)",
 		},
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		// Default: add service interactively
-		return runAddServiceInteractive(cmd)
+		return runAdd(cmd)
 	},
 }
 
-func runAddService(c *cli.Command) error {
+func runAdd(c *cli.Command) error {
 	args := c.Args()
 	secret := c.String("secret")
 
-	// Need either preset name (from args) or custom config flags
+	// No preset and no custom name → interactive
 	if args.Len() == 0 && c.String("name") == "" {
-		return runAddServiceInteractive(c)
+		return runAddInteractive(c)
 	}
 
-	// Validate secret is provided
+	// Validate secret
 	if secret == "" {
 		return fmt.Errorf("--secret is required")
 	}
@@ -71,24 +61,20 @@ func runAddService(c *cli.Command) error {
 		return err
 	}
 
-	// Determine if using preset or custom
 	var newKey config.KeyConfig
 
 	if args.Len() > 0 {
-		// Using preset
+		// Preset mode
 		presetName := args.First()
 		preset, err := config.GetPreset(presetName)
 		if err != nil {
 			return fmt.Errorf("preset '%s' not found. Use 'tr list presets' to see available presets", presetName)
 		}
 
-		// Check if service with this preset already exists
 		serviceName := fmt.Sprintf("%s-%d", presetName, len(cfg.Keys)+1)
 		for _, k := range cfg.Keys {
 			if k.Provider == presetName || k.Name == serviceName {
-				pterm.Warning.Printf("Service with preset '%s' already exists as '%s'\n", presetName, k.Name)
-				// Generate unique name
-				serviceName = fmt.Sprintf("%s-%d", presetName, len(cfg.Keys)+1)
+				serviceName = fmt.Sprintf("%s-%d", presetName, len(cfg.Keys)+2)
 			}
 		}
 
@@ -101,14 +87,12 @@ func runAddService(c *cli.Command) error {
 			Enabled:  true,
 		}
 
-		// Add models from preset or from flags
 		models := c.StringSlice("model")
 		if len(models) > 0 {
 			for _, m := range models {
 				newKey.Models = append(newKey.Models, config.ModelConfig{Name: m})
 			}
 		} else {
-			// Use default models from preset
 			for _, pm := range preset.DefaultModels {
 				newKey.Models = append(newKey.Models, config.ModelConfig{
 					Name:  pm.Name,
@@ -119,7 +103,7 @@ func runAddService(c *cli.Command) error {
 
 		pterm.Success.Printf("Adding service '%s' (preset: %s)\n", serviceName, presetName)
 	} else {
-		// Custom service
+		// Custom mode
 		name := c.String("name")
 		baseURL := c.String("base-url")
 		format := c.String("format")
@@ -136,8 +120,6 @@ func runAddService(c *cli.Command) error {
 		if !config.IsValidFormat(format) {
 			return fmt.Errorf("invalid format: %s (must be openai/anthropic/gemini/cohere)", format)
 		}
-
-		// Check if key already exists
 		if cfg.FindKey(name) != nil {
 			return fmt.Errorf("service '%s' already exists", name)
 		}
@@ -150,8 +132,7 @@ func runAddService(c *cli.Command) error {
 			Enabled: true,
 		}
 
-		models := c.StringSlice("model")
-		for _, m := range models {
+		for _, m := range c.StringSlice("model") {
 			newKey.Models = append(newKey.Models, config.ModelConfig{Name: m})
 		}
 
@@ -170,76 +151,32 @@ func runAddService(c *cli.Command) error {
 	return nil
 }
 
-func runAddServiceInteractive(c *cli.Command) error {
+func runAddInteractive(c *cli.Command) error {
 	pterm.DefaultSection.Println("Add a service")
 
-	// Show available presets
 	presets := config.ListPresets()
-	pterm.Info.Println("Available presets:")
-	for _, p := range presets[:min(10, len(presets))] {
-		pterm.Printf("  - %s (%s)\n", p.Name, p.DisplayName)
-	}
-	if len(presets) > 10 {
-		pterm.Printf("  ... and %d more (use 'tr list presets' to see all)\n", len(presets)-10)
-	}
-	pterm.Println()
 
-	// Ask if using preset or custom
-	var usePreset bool
-	presetPrompt := &survey.Confirm{
-		Message: "Use a preset provider?",
-		Default: true,
+	// Build selection: all presets + "Custom (manual)"
+	options := make([]string, len(presets)+1)
+	for i, p := range presets {
+		options[i] = fmt.Sprintf("%s  (%s)", p.Name, p.DisplayName)
 	}
-	if err := survey.AskOne(presetPrompt, &usePreset); err != nil {
+	customLabel := "Custom (manual config)"
+	options[len(presets)] = customLabel
+
+	var selected string
+	selectPrompt := &survey.Select{
+		Message: "Select provider:",
+		Options: options,
+	}
+	if err := survey.AskOne(selectPrompt, &selected); err != nil {
 		return err
 	}
 
 	var serviceName, baseURL, format, secret string
 	var models []config.ModelConfig
 
-	if usePreset {
-		// Select preset
-		var presetName string
-		presetNames := make([]string, len(presets))
-		for i, p := range presets {
-			presetNames[i] = p.Name
-		}
-		presetSelect := &survey.Select{
-			Message: "Select preset:",
-			Options: presetNames,
-		}
-		if err := survey.AskOne(presetSelect, &presetName); err != nil {
-			return err
-		}
-
-		preset, err := config.GetPreset(presetName)
-		if err != nil {
-			return err
-		}
-
-		// Secret
-		secretPrompt := &survey.Password{
-			Message: fmt.Sprintf("API Key for %s:", preset.DisplayName),
-		}
-		if err := survey.AskOne(secretPrompt, &secret); err != nil || secret == "" {
-			return fmt.Errorf("API key is required")
-		}
-
-		// Auto-generate name
-		configPath := getConfigPath(c)
-		cfg, _ := config.Load(configPath)
-		serviceName = fmt.Sprintf("%s-%d", presetName, len(cfg.Keys)+1)
-
-		baseURL = preset.BaseURL
-		format = preset.Format
-
-		// Use preset models
-		pterm.Info.Printf("Default models: %d\n", len(preset.DefaultModels))
-		for _, pm := range preset.DefaultModels {
-			models = append(models, config.ModelConfig{Name: pm.Name, Alias: pm.Alias})
-		}
-
-	} else {
+	if selected == customLabel {
 		// Custom service
 		namePrompt := &survey.Input{
 			Message: "Service name:",
@@ -272,7 +209,7 @@ func runAddServiceInteractive(c *cli.Command) error {
 			return fmt.Errorf("API key is required")
 		}
 
-		// Add models interactively
+		// Add models
 		pterm.Println()
 		pterm.DefaultSection.WithLevel(2).Println("Add models")
 		for {
@@ -285,6 +222,39 @@ func runAddServiceInteractive(c *cli.Command) error {
 			}
 			models = append(models, config.ModelConfig{Name: modelName})
 		}
+	} else {
+		// Extract preset name from selection
+		presetIdx := -1
+		for i, opt := range options {
+			if opt == selected {
+				presetIdx = i
+				break
+			}
+		}
+		presetName := presets[presetIdx].Name
+
+		preset, err := config.GetPreset(presetName)
+		if err != nil {
+			return err
+		}
+
+		secretPrompt := &survey.Password{
+			Message: fmt.Sprintf("API Key for %s:", preset.DisplayName),
+		}
+		if err := survey.AskOne(secretPrompt, &secret); err != nil || secret == "" {
+			return fmt.Errorf("API key is required")
+		}
+
+		configPath := getConfigPath(c)
+		cfg, _ := config.Load(configPath)
+		serviceName = fmt.Sprintf("%s-%d", presetName, len(cfg.Keys)+1)
+
+		baseURL = preset.BaseURL
+		format = preset.Format
+
+		for _, pm := range preset.DefaultModels {
+			models = append(models, config.ModelConfig{Name: pm.Name, Alias: pm.Alias})
+		}
 	}
 
 	// Save
@@ -294,7 +264,6 @@ func runAddServiceInteractive(c *cli.Command) error {
 		return err
 	}
 
-	// Check if name exists
 	if cfg.FindKey(serviceName) != nil {
 		return fmt.Errorf("service '%s' already exists", serviceName)
 	}
@@ -306,9 +275,6 @@ func runAddServiceInteractive(c *cli.Command) error {
 		Secret:  secret,
 		Enabled: true,
 		Models:  models,
-	}
-	if usePreset {
-		newKey.Provider = serviceName[:len(serviceName)-2] // Extract preset name
 	}
 
 	cfg.Keys = append(cfg.Keys, newKey)
@@ -324,9 +290,18 @@ func runAddServiceInteractive(c *cli.Command) error {
 	return nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// getDefaultURL returns a default base URL for a given format.
+func getDefaultURL(format string) string {
+	switch format {
+	case config.FormatOpenAI:
+		return "https://api.openai.com/v1"
+	case config.FormatAnthropic:
+		return "https://api.anthropic.com/v1"
+	case config.FormatGemini:
+		return "https://generativelanguage.googleapis.com/v1"
+	case config.FormatCohere:
+		return "https://api.cohere.ai/v1"
+	default:
+		return ""
 	}
-	return b
 }

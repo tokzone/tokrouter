@@ -19,10 +19,12 @@ import (
 	"github.com/tokzone/tokrouter/usage"
 )
 
-// RouterService defines the interface for router operations.
-type RouterService interface {
-	Forward(ctx context.Context, rawReq []byte, model string, clientFormat provider.Protocol) ([]byte, *message.Usage, error)
-	ForwardStream(ctx context.Context, rawReq []byte, model string, clientFormat provider.Protocol) (*flux.StreamResult, string, string, error)
+// Router defines the interface for routing operations.
+type Router interface {
+	ForwardOpenAI(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error)
+	ForwardAnthropic(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error)
+	ForwardStreamOpenAI(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error)
+	ForwardStreamAnthropic(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error)
 	RecordStreamUsage(usage *message.Usage, model string, providerURL string)
 	ProviderStatuses() []ProviderStatus
 	Stats(filter usage.QueryFilter) ([]usage.StatRow, error)
@@ -31,23 +33,26 @@ type RouterService interface {
 	Close() error
 }
 
-// Service is the router application service (implements RouterService)
-type Service struct {
-	mu            sync.RWMutex
-	state         *serviceState // Atomic state container
-	usageSvc      *usage.Service
-	healthLogger  *slog.Logger
+// router is the unexported implementation of Router.
+type router struct {
+	mu           sync.RWMutex
+	ctx          *routerCtx // Atomic state container (swapped on reload)
+	usageSvc     *usage.Service
+	healthLogger *slog.Logger
 }
 
-// Ensure Service implements RouterService at compile time
-var _ RouterService = (*Service)(nil)
+// Ensure router implements Router at compile time.
+var _ Router = (*router)(nil)
 
-// serviceState holds mutable state swapped atomically on reload.
-type serviceState struct {
-	clients   map[string]*flux.Client
-	aliasMap  map[string]string
-	cfg       *config.Config
-	retryMax  int
+// routerCtx holds the pre-prepared routing context, swapped atomically on reload.
+type routerCtx struct {
+	openAIDoFuncs       map[string]flux.DoFunc
+	anthropicDoFuncs    map[string]flux.DoFunc
+	openAIStreamDoFuncs map[string]flux.StreamDoFunc
+	anthropicStreamDoFuncs map[string]flux.StreamDoFunc
+	aliases             map[string]string
+	cfg                 *config.Config
+	retryMax            int
 }
 
 // ProviderStatus represents runtime status of a provider (separated from config)
@@ -64,39 +69,54 @@ type ModelStatus struct {
 	Healthy bool
 }
 
-// NewService creates a router service from user endpoints
-func NewService(userEndpoints []*flux.UserEndpoint, usageSvc *usage.Service, retryMax int, httpCfg *config.HTTPConfig) *Service {
-	return &Service{
-		state: &serviceState{
-			clients:  buildClients(userEndpoints, retryMax, httpCfg),
-			aliasMap: make(map[string]string),
-			retryMax: retryMax,
+// New creates a Router from user endpoints.
+func New(userEndpoints []*flux.UserEndpoint, usageSvc *usage.Service, retryMax int, httpCfg *config.HTTPConfig, aliases map[string]string, cfg *config.Config) Router {
+	if aliases == nil {
+		aliases = make(map[string]string)
+	}
+	openAIDoFuncs, anthropicDoFuncs, openAIStreamDoFuncs, anthropicStreamDoFuncs := buildDoFuncs(userEndpoints, retryMax, httpCfg)
+	return &router{
+		ctx: &routerCtx{
+			openAIDoFuncs:          openAIDoFuncs,
+			anthropicDoFuncs:       anthropicDoFuncs,
+			openAIStreamDoFuncs:    openAIStreamDoFuncs,
+			anthropicStreamDoFuncs: anthropicStreamDoFuncs,
+			aliases:                aliases,
+			cfg:                    cfg,
+			retryMax:               retryMax,
 		},
 		usageSvc:     usageSvc,
 		healthLogger: slog.Default().With("component", "router"),
 	}
 }
 
-// buildClients groups user endpoints by model and creates a flux.Client for each.
-// If httpCfg is provided, creates a custom HTTP client with those settings.
-func buildClients(userEndpoints []*flux.UserEndpoint, retryMax int, httpCfg *config.HTTPConfig) map[string]*flux.Client {
+// buildDoFuncs groups user endpoints by model, creates a flux.Client for each model,
+// and pre-generates DoFunc instances for both OpenAI and Anthropic input protocols.
+func buildDoFuncs(userEndpoints []*flux.UserEndpoint, retryMax int, httpCfg *config.HTTPConfig) (map[string]flux.DoFunc, map[string]flux.DoFunc, map[string]flux.StreamDoFunc, map[string]flux.StreamDoFunc) {
 	modelEndpoints := make(map[string][]*flux.UserEndpoint)
 	for _, ue := range userEndpoints {
 		modelEndpoints[ue.Model()] = append(modelEndpoints[ue.Model()], ue)
 	}
 
-	// Build HTTP client options if config provided
 	var httpOpts []flux.Option
 	if httpCfg != nil && httpCfg.Timeout != "" {
 		httpOpts = append(httpOpts, flux.WithHTTPClient(buildHTTPClient(httpCfg)))
 	}
 
-	clients := make(map[string]*flux.Client)
+	openAIDoFuncs := make(map[string]flux.DoFunc)
+	anthropicDoFuncs := make(map[string]flux.DoFunc)
+	openAIStreamDoFuncs := make(map[string]flux.StreamDoFunc)
+	anthropicStreamDoFuncs := make(map[string]flux.StreamDoFunc)
+
 	for model, ues := range modelEndpoints {
 		opts := append([]flux.Option{flux.WithRetryMax(retryMax)}, httpOpts...)
-		clients[model] = flux.NewClient(ues, opts...)
+		client := flux.NewClient(ues, opts...)
+		openAIDoFuncs[model] = flux.DoFuncGen(client, provider.ProtocolOpenAI)
+		anthropicDoFuncs[model] = flux.DoFuncGen(client, provider.ProtocolAnthropic)
+		openAIStreamDoFuncs[model] = flux.StreamDoFuncGen(client, provider.ProtocolOpenAI)
+		anthropicStreamDoFuncs[model] = flux.StreamDoFuncGen(client, provider.ProtocolAnthropic)
 	}
-	return clients
+	return openAIDoFuncs, anthropicDoFuncs, openAIStreamDoFuncs, anthropicStreamDoFuncs
 }
 
 // buildHTTPClient creates a custom HTTP client from HTTPConfig.
@@ -114,8 +134,8 @@ func buildHTTPClient(cfg *config.HTTPConfig) *http.Client {
 	}
 }
 
-// NewServiceFromConfig creates a router service from config (factory method)
-func NewServiceFromConfig(cfg *config.Config) (*Service, error) {
+// NewFromConfig creates a Router from config (factory method).
+func NewFromConfig(cfg *config.Config) (Router, error) {
 	userEndpoints := cfg.ToUserEndpoints()
 
 	var usageSvc *usage.Service
@@ -127,25 +147,20 @@ func NewServiceFromConfig(cfg *config.Config) (*Service, error) {
 		usageSvc = usage.NewService(store)
 	}
 
-	// Pass HTTP config if timeout is set
 	var httpCfg *config.HTTPConfig
 	if cfg.HTTP.Timeout != "" {
 		httpCfg = &cfg.HTTP
 	}
 
-	svc := NewService(userEndpoints, usageSvc, cfg.Router.Retry.MaxRetries, httpCfg)
-	svc.state.cfg = cfg
-
-	// Build alias map from config
-	svc.state.aliasMap = cfg.AliasMap()
+	svc := New(userEndpoints, usageSvc, cfg.Router.Retry.MaxRetries, httpCfg, cfg.AliasMap(), cfg)
 
 	return svc, nil
 }
 
-// ServerConfig returns server configuration
-func (s *Service) ServerConfig() config.ServerConfig {
+// ServerConfig returns server configuration.
+func (s *router) ServerConfig() config.ServerConfig {
 	s.mu.RLock()
-	cfg := s.state.cfg
+	cfg := s.ctx.cfg
 	s.mu.RUnlock()
 
 	if cfg == nil {
@@ -160,89 +175,86 @@ func (s *Service) ServerConfig() config.ServerConfig {
 	}
 }
 
-// Forward forwards request to upstream provider (non-streaming)
-func (s *Service) Forward(ctx context.Context, rawReq []byte, model string, clientFormat provider.Protocol) ([]byte, *message.Usage, error) {
-	client, actualModel, providerURL, modifiedReq, err := s.prepareRequest(rawReq, model)
-	if err != nil {
-		return nil, nil, err
+// ForwardOpenAI forwards a non-streaming request received via the OpenAI endpoint.
+func (s *router) ForwardOpenAI(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error) {
+	return s.forward(ctx, body, model, s.ctx.openAIDoFuncs)
+}
+
+// ForwardAnthropic forwards a non-streaming request received via the Anthropic endpoint.
+func (s *router) ForwardAnthropic(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error) {
+	return s.forward(ctx, body, model, s.ctx.anthropicDoFuncs)
+}
+
+func (s *router) forward(ctx context.Context, body []byte, model string, doFuncs map[string]flux.DoFunc) ([]byte, *message.Usage, error) {
+	model, body = resolveAlias(model, body, s.ctx.aliases)
+
+	doFunc, ok := doFuncs[model]
+	if !ok {
+		return nil, nil, errors.Wrap(errors.CodeNoEndpoint, fmt.Sprintf("no endpoint for model: %s", model), nil)
 	}
 
-	s.healthLogger.Debug("forward starting", "model", actualModel, "provider", providerURL)
+	s.healthLogger.Debug("forward starting", "model", model)
 
-	resp, usage, err := client.Do(ctx, modifiedReq, clientFormat)
+	resp, usage, providerURL, err := doFunc(ctx, body)
 	if err != nil {
-		s.healthLogger.Error("forward failed", "model", actualModel, "provider", providerURL, "error", err.Error())
+		s.healthLogger.Error("forward failed", "model", model, "provider", providerURL, "error", err.Error())
 		return nil, nil, err
 	}
 
 	if s.usageSvc != nil && usage != nil {
-		s.usageSvc.RecordWithModelAndProvider(usage, actualModel, providerURL, false)
+		s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL, false)
 	}
 
 	return resp, usage, nil
 }
 
-// ForwardStream forwards request to upstream provider (streaming).
-func (s *Service) ForwardStream(ctx context.Context, rawReq []byte, model string, clientFormat provider.Protocol) (*flux.StreamResult, string, string, error) {
-	client, actualModel, providerURL, modifiedReq, err := s.prepareRequest(rawReq, model)
+// ForwardStreamOpenAI forwards a streaming request received via the OpenAI endpoint.
+func (s *router) ForwardStreamOpenAI(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error) {
+	return s.forwardStream(ctx, body, model, s.ctx.openAIStreamDoFuncs)
+}
+
+// ForwardStreamAnthropic forwards a streaming request received via the Anthropic endpoint.
+func (s *router) ForwardStreamAnthropic(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error) {
+	return s.forwardStream(ctx, body, model, s.ctx.anthropicStreamDoFuncs)
+}
+
+func (s *router) forwardStream(ctx context.Context, body []byte, model string, streamDoFuncs map[string]flux.StreamDoFunc) (*flux.StreamResult, string, string, error) {
+	model, body = resolveAlias(model, body, s.ctx.aliases)
+
+	streamDoFunc, ok := streamDoFuncs[model]
+	if !ok {
+		return nil, "", "", errors.Wrap(errors.CodeNoEndpoint, fmt.Sprintf("no endpoint for model: %s", model), nil)
+	}
+
+	s.healthLogger.Debug("forward stream starting", "model", model)
+
+	result, _, providerURL, err := streamDoFunc(ctx, body)
 	if err != nil {
+		s.healthLogger.Error("forward stream failed", "model", model, "provider", providerURL, "error", err.Error())
 		return nil, "", "", err
 	}
 
-	s.healthLogger.Debug("forward stream starting", "model", actualModel, "provider", providerURL)
-
-	result, err := client.DoStream(ctx, modifiedReq, clientFormat)
-	if err != nil {
-		s.healthLogger.Error("forward stream failed", "model", actualModel, "provider", providerURL, "error", err.Error())
-		return nil, "", "", err
-	}
-
-	return result, actualModel, providerURL, nil
+	return result, model, providerURL, nil
 }
 
 // RecordStreamUsage records usage after stream completes
-func (s *Service) RecordStreamUsage(usage *message.Usage, model string, providerURL string) {
+func (s *router) RecordStreamUsage(usage *message.Usage, model string, providerURL string) {
 	if s.usageSvc == nil || usage == nil {
 		return
 	}
 	s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL, true)
 }
 
-func (s *Service) prepareRequest(rawReq []byte, model string) (*flux.Client, string, string, []byte, error) {
-	s.mu.RLock()
-	state := s.state
-	s.mu.RUnlock()
-
-	if actualModel, ok := state.aliasMap[model]; ok {
+// resolveAlias resolves model aliases and rewrites the model field in the request body.
+func resolveAlias(model string, body []byte, aliases map[string]string) (string, []byte) {
+	if actualModel, ok := aliases[model]; ok {
 		model = actualModel
-		rawReq = rewriteModelInRequest(rawReq, model)
+		body = rewriteModelInRequest(body, model)
 	}
-
-	client, ok := state.clients[model]
-	if !ok {
-		return nil, "", "", nil, errors.Wrap(errors.CodeNoEndpoint, fmt.Sprintf("no endpoint for model: %s", model), nil)
-	}
-
-	ue := client.Next()
-	if ue == nil {
-		return nil, "", "", nil, errors.Wrap(errors.CodeNoEndpoint, fmt.Sprintf("no available endpoint for model: %s", model), nil)
-	}
-	providerURL := ue.BaseURL()
-
-	return client, model, providerURL, rawReq, nil
+	return model, body
 }
 
-func (s *Service) getClient(model string) (*flux.Client, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.state.clients == nil {
-		return nil, false
-	}
-	client, ok := s.state.clients[model]
-	return client, ok
-}
-
-func (s *Service) ProviderStatuses() []ProviderStatus {
+func (s *router) ProviderStatuses() []ProviderStatus {
 	endpoints := endpoint.GlobalRegistry().GetAll()
 
 	providerMap := make(map[string]*ProviderStatus)
@@ -253,7 +265,7 @@ func (s *Service) ProviderStatuses() []ProviderStatus {
 		if !ok {
 			pStatus = &ProviderStatus{
 				Name:     providerKey,
-				Protocol: prov.Protocol.String(),
+				Protocol: ep.Protocol().String(),
 			}
 			providerMap[providerKey] = pStatus
 		}
@@ -276,21 +288,21 @@ func (s *Service) ProviderStatuses() []ProviderStatus {
 }
 
 // Stats returns usage statistics
-func (s *Service) Stats(filter usage.QueryFilter) ([]usage.StatRow, error) {
+func (s *router) Stats(filter usage.QueryFilter) ([]usage.StatRow, error) {
 	if s.usageSvc == nil {
 		return nil, usage.ErrDisabled
 	}
 	return s.usageSvc.Query(filter)
 }
 
-func (s *Service) Close() error {
+func (s *router) Close() error {
 	if s.usageSvc == nil {
 		return nil
 	}
 	return s.usageSvc.Close()
 }
 
-func (s *Service) Reload(cfg *config.Config) error {
+func (s *router) Reload(cfg *config.Config) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
@@ -300,7 +312,7 @@ func (s *Service) Reload(cfg *config.Config) error {
 	userEndpoints := cfg.ToUserEndpoints()
 
 	s.mu.RLock()
-	retryMax := s.state.retryMax
+	retryMax := s.ctx.retryMax
 	s.mu.RUnlock()
 
 	// Pass HTTP config if timeout is set
@@ -309,18 +321,21 @@ func (s *Service) Reload(cfg *config.Config) error {
 		httpCfg = &cfg.HTTP
 	}
 
-	newState := &serviceState{
-		cfg:      cfg,
-		aliasMap: cfg.AliasMap(),
-		clients:  buildClients(userEndpoints, retryMax, httpCfg),
-		retryMax: retryMax,
-	}
+	openAIDoFuncs, anthropicDoFuncs, openAIStreamDoFuncs, anthropicStreamDoFuncs := buildDoFuncs(userEndpoints, retryMax, httpCfg)
 
 	s.mu.Lock()
-	s.state = newState
+	s.ctx = &routerCtx{
+		openAIDoFuncs:          openAIDoFuncs,
+		anthropicDoFuncs:       anthropicDoFuncs,
+		openAIStreamDoFuncs:    openAIStreamDoFuncs,
+		anthropicStreamDoFuncs: anthropicStreamDoFuncs,
+		aliases:                cfg.AliasMap(),
+		cfg:                    cfg,
+		retryMax:               retryMax,
+	}
 	s.mu.Unlock()
 
-	s.healthLogger.Info("config reloaded", "models", len(newState.clients))
+	s.healthLogger.Info("config reloaded", "models", len(openAIDoFuncs))
 	return nil
 }
 

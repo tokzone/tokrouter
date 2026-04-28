@@ -44,7 +44,7 @@ func TestConcurrentReload(t *testing.T) {
 			Keys: []config.KeyConfig{
 				{
 					Name:    "test",
-					BaseURL: "https://api.example.com",
+					BaseURLs: map[string]string{"openai": "https://api.example.com"},
 					Format:  "openai",
 					Secret:  "test-key",
 					Enabled: true,

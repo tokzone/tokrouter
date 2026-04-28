@@ -199,7 +199,7 @@ func HandleHealth(routerSvc router.Router) http.HandlerFunc {
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status":  status,
-			"version": "v0.7.1",
+			"version": "v0.7.2",
 			"details": details,
 		})
 	}

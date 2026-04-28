@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -63,12 +64,12 @@ type KeyConfig struct {
 	Provider string `mapstructure:"provider"`
 
 	// Traditional fields (required when Provider is not set)
-	Name      string        `mapstructure:"name"`
-	BaseURL   string        `mapstructure:"base_url"`
-	Format    string        `mapstructure:"format"` // Single protocol: "openai", "anthropic", "gemini", "cohere"
-	Secret    string        `mapstructure:"secret"`
-	Enabled   bool          `mapstructure:"enabled"` // kept for config file compatibility
-	Models    []ModelConfig `mapstructure:"models"`
+	Name      string            `mapstructure:"name"`
+	BaseURLs  map[string]string `mapstructure:"base_urls"`
+	Format    string            `mapstructure:"format"` // Single protocol: "openai", "anthropic", "gemini", "cohere"
+	Secret    string            `mapstructure:"secret"`
+	Enabled   bool              `mapstructure:"enabled"`
+	Models    []ModelConfig     `mapstructure:"models"`
 }
 
 // Protocol returns the provider.Protocol for this key config (default protocol).
@@ -320,7 +321,8 @@ Suggestion: Add at least one key in config.yaml:
     - name: openai-main
       format: openai
       secret: "sk-..."  # or use "${OPENAI_API_KEY}"
-      base_url: "https://api.openai.com/v1"
+      base_urls:
+        openai: "https://api.openai.com/v1"
       enabled: true
       models:
         - name: gpt-4
@@ -353,13 +355,14 @@ Suggestion: Add a name for this key in config.yaml:
     - name: my-key-name  # required
       ...`, keyPath)
 				}
-				if k.BaseURL == "" {
-					return fmt.Errorf(`%s: missing required field 'base_url'
+				if k.BaseURLs == nil || len(k.BaseURLs) == 0 {
+					return fmt.Errorf(`%s: missing required field 'base_urls'
 
-Suggestion: Add the API base URL in config.yaml:
+Suggestion: Add the API base URLs in config.yaml:
   keys:
     - name: %s
-      base_url: "https://api.openai.com/v1"
+      base_urls:
+        openai: "https://api.openai.com/v1"
       ...`, keyPath, k.Name)
 				}
 				if k.Format == "" {
@@ -455,6 +458,17 @@ const (
 	FormatCohere    = "cohere"
 )
 
+// toProtoURLs converts a string-keyed BaseURLs map to a provider.Protocol-keyed map.
+func toProtoURLs(stringURLs map[string]string) map[provider.Protocol]string {
+	result := make(map[provider.Protocol]string, len(stringURLs))
+	for protoStr, url := range stringURLs {
+		if p, err := ParseProtocol(protoStr); err == nil {
+			result[p] = url
+		}
+	}
+	return result
+}
+
 // ParseProtocol parses string to provider.Protocol
 func ParseProtocol(s string) (provider.Protocol, error) {
 	switch s {
@@ -498,7 +512,7 @@ func (c *Config) ToUserEndpoints() []*flux.UserEndpoint {
 			continue
 		}
 
-		prov := provider.NewProvider(providerID, kc.BaseURL)
+		prov := provider.NewProvider(providerID, toProtoURLs(kc.BaseURLs))
 		providerID++
 
 		apiKey, err := flux.NewAPIKey(prov, kc.Secret)
@@ -586,7 +600,7 @@ func Save(configPath string, cfg *Config) error {
 		}
 		kcMap := map[string]interface{}{
 			"name":     kc.Name,
-			"base_url": kc.BaseURL,
+			"base_urls": kc.BaseURLs,
 			"format":   kc.Format,
 			"secret":   kc.Secret,
 			"enabled":  kc.Enabled,
@@ -603,7 +617,7 @@ func Save(configPath string, cfg *Config) error {
 }
 
 // applyPreset fills in missing fields from a provider preset.
-// If Provider field is set, it uses the preset to populate Name, BaseURL, Format, Protocols, Models.
+// If Provider field is set, it uses the preset to populate Name, BaseURLs, Format, Protocols, Models.
 func applyPreset(kc *KeyConfig, index int) error {
 	if kc.Provider == "" {
 		return nil // No preset, use traditional config
@@ -618,8 +632,8 @@ func applyPreset(kc *KeyConfig, index int) error {
 	if kc.Name == "" {
 		kc.Name = fmt.Sprintf("%s-%d", kc.Provider, index+1)
 	}
-	if kc.BaseURL == "" {
-		kc.BaseURL = preset.BaseURL
+	if len(kc.BaseURLs) == 0 {
+		kc.BaseURLs = maps.Clone(preset.BaseURLs)
 	}
 	if kc.Format == "" {
 		kc.Format = preset.Format
@@ -634,7 +648,6 @@ func applyPreset(kc *KeyConfig, index int) error {
 		}
 	}
 
-	// Note: viper should handle this, but ensure explicit default
 	if !kc.Enabled && kc.Secret != "" {
 		kc.Enabled = true
 	}

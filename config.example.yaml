@@ -2,10 +2,10 @@
 #
 # Two ways to configure:
 # 1. Simplified (recommended): Use preset provider, only need secret
-# 2. Traditional: Full config with name, base_url, format, models
+# 2. Traditional: Full config with name, base_urls, format, models
 
 # ===== Simplified Config (Recommended) =====
-# Just specify provider and secret - base_url, format, models are auto-filled!
+# Just specify provider and secret - base_urls, format, models are auto-filled!
 keys:
   # International providers
   - provider: openai
@@ -46,7 +46,8 @@ keys:
 # If you need a custom provider not in presets:
 # keys:
 #   - name: my-custom-service
-#     base_url: "https://custom.api.com/v1"
+#     base_urls:
+#       openai: "https://custom.api.com/v1"
 #     format: openai
 #     secret: "xxx"
 #     models:

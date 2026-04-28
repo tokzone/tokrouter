@@ -3,13 +3,21 @@
 # Place this file as "providers.yaml" next to your config.yaml
 # to add or override provider presets.
 #
-# User-defined presets override built-in presets with the same name.
+# Built-in presets are defined in config/presets.yaml (embedded in the binary).
+# User-defined presets here take precedence over built-in presets with the same name.
+#
+# To see all built-in presets:
+#   tokrouter list presets
+#
+# To see a specific built-in preset:
+#   tokrouter show <provider>
 
 providers:
   # Example: Add a custom/small provider
   my-custom-api:
     display_name: "My Custom API"
-    base_url: "https://my-custom.api.com/v1"
+    base_urls:
+      openai: "https://my-custom.api.com/v1"
     format: openai
     models:
       - name: my-model-v1
@@ -22,7 +30,8 @@ providers:
   # Example: Override built-in preset (add more models)
   openai:
     display_name: "OpenAI (Custom)"
-    base_url: "https://api.openai.com/v1"
+    base_urls:
+      openai: "https://api.openai.com/v1"
     format: openai
     models:
       - name: gpt-4o

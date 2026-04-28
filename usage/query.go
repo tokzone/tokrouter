@@ -15,7 +15,7 @@ const (
 type QueryFilter struct {
 	Start    time.Time
 	End      time.Time
-	Provider string // Provider filter (BaseURL)
+	Provider string // Provider filter (PrimaryBaseURL)
 	Model    string
 	GroupBy  GroupBy
 }

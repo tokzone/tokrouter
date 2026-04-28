@@ -8,6 +8,8 @@ require (
 	github.com/spf13/viper v1.18.2
 	github.com/tokzone/fluxcore v0.0.0-00010101000000-000000000000
 	github.com/urfave/cli/v3 v3.8.0
+	golang.org/x/time v0.15.0
+	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/sqlite v1.5.4
 	gorm.io/gorm v1.25.5
 )
@@ -49,7 +51,5 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

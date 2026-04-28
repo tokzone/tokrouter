@@ -1,6 +1,7 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -57,7 +58,7 @@ type routerCtx struct {
 
 // ProviderStatus represents runtime status of a provider (separated from config)
 type ProviderStatus struct {
-	Name     string // Provider identifier (BaseURL)
+	Name     string // Provider identifier (PrimaryBaseURL)
 	Protocol string // Protocol format
 	Healthy  bool   // Overall health status
 	Models   []ModelStatus
@@ -260,7 +261,7 @@ func (s *router) ProviderStatuses() []ProviderStatus {
 	providerMap := make(map[string]*ProviderStatus)
 	for _, ep := range endpoints {
 		prov := ep.Provider()
-		providerKey := prov.BaseURL
+		providerKey := prov.PrimaryBaseURL()
 		pStatus, ok := providerMap[providerKey]
 		if !ok {
 			pStatus = &ProviderStatus{
@@ -340,14 +341,13 @@ func (s *router) Reload(cfg *config.Config) error {
 }
 
 func rewriteModelInRequest(rawReq []byte, newModel string) []byte {
-	var req map[string]interface{}
-	if err := json.Unmarshal(rawReq, &req); err != nil {
+	var partial struct {
+		Model json.RawMessage `json:"model"`
+	}
+	if err := json.Unmarshal(rawReq, &partial); err != nil || partial.Model == nil {
 		return rawReq
 	}
-	req["model"] = newModel
-	result, err := json.Marshal(req)
-	if err != nil {
-		return rawReq
-	}
-	return result
+	// Replace only the model value bytes, leaving the rest of the body untouched.
+	newVal := []byte(`"` + newModel + `"`)
+	return bytes.Replace(rawReq, partial.Model, newVal, 1)
 }

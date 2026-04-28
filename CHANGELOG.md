@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-04-28
+
+### Changed — base_url → base_urls (Per-Protocol Provider URLs)
+
+- **`Provider.BaseURL` → `BaseURLs`**: `Provider` struct now holds `BaseURLs map[Protocol]string` instead of a single `BaseURL string`. Each protocol can have its own endpoint URL (e.g., Zhipu uses `/api/paas/v4` for OpenAI and `/api/anthropic` for Anthropic).
+- **`KeyConfig` syntax**: Config field `base_url` replaced by `base_urls` map. Custom services declare per-protocol URLs; preset services auto-fill from provider preset.
+- **Dual-protocol presets**: Zhipu, Qwen, DeepSeek, SiliconFlow, ModelScope, and OpenRouter now have per-protocol `base_urls` in presets.
+- **`rewriteModelInRequest` optimized**: Replaced full JSON unmarshal/marshal with `json.RawMessage` + `bytes.Replace` for O(1) model field rewriting.
+- **Removed `hardcodedPresets`**: 428-line Go fallback map deleted — embedded YAML is the sole source of truth.
+- **`maps.Clone` for preset sharing**: Prevented shared map reference mutation between `BuiltinPresets` and individual `KeyConfig` instances.
+
+### Migration Guide (v0.7.1 → v0.7.2)
+
+```yaml
+# Before (v0.7.1)
+keys:
+  - name: my-api
+    base_url: "https://api.example.com/v1"
+    format: openai
+    secret: "${MY_API_KEY}"
+    models:
+      - name: my-model
+
+# After (v0.7.2)
+keys:
+  - name: my-api
+    base_urls:
+      openai: "https://api.example.com/v1"
+    format: openai
+    secret: "${MY_API_KEY}"
+    models:
+      - name: my-model
+
+# Preset mode (no change needed — provider preset auto-fills base_urls)
+keys:
+  - provider: openai
+    secret: "${OPENAI_API_KEY}"
+```
+
 ## [0.7.1] - 2026-04-28
 
 ### Changed — Multi-Protocol Architecture (fluxcore)

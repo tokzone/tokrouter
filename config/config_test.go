@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/tokzone/fluxcore/endpoint"
+	"github.com/tokzone/fluxcore/provider"
 )
 
 func TestLoad(t *testing.T) {
@@ -19,7 +20,8 @@ server:
 
 keys:
   - name: test-key
-    base_url: "https://api.example.com/v1"
+    base_urls:
+      openai: "https://api.example.com/v1"
     format: openai
     secret: "test-secret"
     enabled: true
@@ -68,7 +70,8 @@ server:
 
 keys:
   - name: test-key
-    base_url: "https://api.example.com/v1"
+    base_urls:
+      openai: "https://api.example.com/v1"
     format: openai
     secret: "${TEST_API_KEY}"
     enabled: true
@@ -106,7 +109,7 @@ func TestValidate(t *testing.T) {
 				Keys: []KeyConfig{
 					{
 						Name:    "test",
-						BaseURL: "https://api.example.com",
+						BaseURLs: map[string]string{FormatOpenAI: "https://api.example.com"},
 						Format:  "openai",
 						Secret:  "key",
 						Enabled: true,
@@ -124,7 +127,7 @@ func TestValidate(t *testing.T) {
 				Keys: []KeyConfig{
 					{
 						Name:    "test",
-						BaseURL: "https://api.example.com",
+						BaseURLs: map[string]string{FormatOpenAI: "https://api.example.com"},
 						Format:  "openai",
 						Enabled: true,
 						Models:  []ModelConfig{{Name: "gpt-4"}},
@@ -141,7 +144,7 @@ func TestValidate(t *testing.T) {
 				Keys: []KeyConfig{
 					{
 						Name:    "test",
-						BaseURL: "https://api.example.com",
+						BaseURLs: map[string]string{FormatOpenAI: "https://api.example.com"},
 						Format:  "openai",
 						Secret:  "key",
 						Enabled: true,
@@ -172,7 +175,7 @@ func TestToUserEndpoints(t *testing.T) {
 		Keys: []KeyConfig{
 			{
 				Name:    "openai",
-				BaseURL: "https://api.openai.com/v1",
+				BaseURLs: map[string]string{FormatOpenAI: "https://api.openai.com/v1"},
 				Format:  "openai",
 				Secret:  "sk-test",
 				Enabled: true,
@@ -183,7 +186,7 @@ func TestToUserEndpoints(t *testing.T) {
 			},
 			{
 				Name:    "disabled-key",
-				BaseURL: "https://api.example.com",
+				BaseURLs: map[string]string{FormatOpenAI: "https://api.example.com"},
 				Format:  "openai",
 				Secret:  "sk-disabled",
 				Enabled: false,
@@ -200,8 +203,8 @@ func TestToUserEndpoints(t *testing.T) {
 	}
 
 	// Check first user endpoint
-	if userEndpoints[0].BaseURL() != "https://api.openai.com/v1" {
-		t.Errorf("BaseURL = %s, want https://api.openai.com/v1", userEndpoints[0].BaseURL())
+	if userEndpoints[0].BaseURL(provider.ProtocolOpenAI) != "https://api.openai.com/v1" {
+		t.Errorf("BaseURL = %s, want https://api.openai.com/v1", userEndpoints[0].BaseURL(provider.ProtocolOpenAI))
 	}
 	if userEndpoints[0].Model() != "gpt-4" {
 		t.Errorf("Model = %s, want gpt-4", userEndpoints[0].Model())
@@ -224,7 +227,8 @@ server:
 
 keys:
   - name: test-key
-    base_url: "https://api.example.com/v1"
+    base_urls:
+      openai: "https://api.example.com/v1"
     format: openai
     secret: "test-secret"
     enabled: true
@@ -278,7 +282,8 @@ server:
 
 keys:
   - name: test-key
-    base_url: "https://api.example.com/v1"
+    base_urls:
+      openai: "https://api.example.com/v1"
     format: openai
     secret: "test-secret"
     enabled: true
@@ -366,7 +371,7 @@ func TestSave(t *testing.T) {
 		Keys: []KeyConfig{
 			{
 				Name:    "test",
-				BaseURL: "https://api.example.com",
+				BaseURLs: map[string]string{FormatOpenAI: "https://api.example.com"},
 				Format:  "openai",
 				Secret:  "test-secret",
 				Enabled: true,
@@ -459,8 +464,8 @@ log:
 	if cfg.Keys[0].Name != "openai-1" {
 		t.Errorf("Key[0] Name = %s, want openai-1 (auto-generated)", cfg.Keys[0].Name)
 	}
-	if cfg.Keys[0].BaseURL != "https://api.openai.com/v1" {
-		t.Errorf("Key[0] BaseURL = %s, want preset value", cfg.Keys[0].BaseURL)
+	if cfg.Keys[0].BaseURLs[FormatOpenAI] != "https://api.openai.com/v1" {
+		t.Errorf("Key[0] BaseURL = %s, want preset value", cfg.Keys[0].BaseURLs[FormatOpenAI])
 	}
 	if cfg.Keys[0].Format != "openai" {
 		t.Errorf("Key[0] Format = %s, want openai", cfg.Keys[0].Format)
@@ -484,8 +489,8 @@ log:
 	if cfg.Keys[1].Name != "deepseek-2" {
 		t.Errorf("Key[1] Name = %s, want deepseek-2", cfg.Keys[1].Name)
 	}
-	if cfg.Keys[1].BaseURL != "https://api.deepseek.com" {
-		t.Errorf("Key[1] BaseURL = %s, want preset value", cfg.Keys[1].BaseURL)
+	if cfg.Keys[1].BaseURLs[FormatOpenAI] != "https://api.deepseek.com" {
+		t.Errorf("Key[1] BaseURL = %s, want preset value", cfg.Keys[1].BaseURLs[FormatOpenAI])
 	}
 	if len(cfg.Keys[1].Models) != 1 {
 		t.Errorf("Key[1] Models count = %d, want 1 (custom override)", len(cfg.Keys[1].Models))
@@ -527,8 +532,8 @@ func TestGetPreset(t *testing.T) {
 	if preset.DisplayName != "OpenAI" {
 		t.Errorf("DisplayName = %s, want OpenAI", preset.DisplayName)
 	}
-	if preset.BaseURL != "https://api.openai.com/v1" {
-		t.Errorf("BaseURL = %s, want https://api.openai.com/v1", preset.BaseURL)
+	if preset.BaseURLs[FormatOpenAI] != "https://api.openai.com/v1" {
+		t.Errorf("BaseURL = %s, want https://api.openai.com/v1", preset.BaseURLs[FormatOpenAI])
 	}
 	if preset.Format != "openai" {
 		t.Errorf("Format = %s, want openai", preset.Format)
@@ -560,8 +565,8 @@ func TestListPresets(t *testing.T) {
 		if p.Name == "" {
 			t.Errorf("Preset[%d] has empty name", i)
 		}
-		if p.BaseURL == "" {
-			t.Errorf("Preset[%d] %s has empty BaseURL", i, p.Name)
+		if len(p.BaseURLs) == 0 {
+			t.Errorf("Preset[%d] %s has empty BaseURLs", i, p.Name)
 		}
 		if p.Format == "" {
 			t.Errorf("Preset[%d] %s has empty Format", i, p.Name)

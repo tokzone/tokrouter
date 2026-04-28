@@ -184,7 +184,7 @@ curl -X POST http://localhost:8765/v1/messages \
 
 | 字段 | 说明 |
 |------|------|
-| name | Provider 的 BaseURL |
+| name | Provider 的 PrimaryBaseURL |
 | protocol | 默认协议（protocols[0]） |
 | healthy | 至少一个模型健康则为 true |
 | models | 各模型的健康状态 |
@@ -206,7 +206,7 @@ curl http://localhost:8765/status
 ```json
 {
   "status": "ok",
-  "version": "v0.7.1",
+  "version": "v0.7.2",
   "details": {
     "endpoints": {"total": 2, "healthy": 2},
     "usage": "ok"
@@ -221,7 +221,7 @@ curl http://localhost:8765/status
 ```json
 {
   "status": "degraded",
-  "version": "v0.7.1",
+  "version": "v0.7.2",
   "details": {
     "endpoints": {"total": 2, "healthy": 0},
     "usage": "ok"

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,19 +28,21 @@ func NewTestConfigBuilder() *TestConfigBuilder {
 // WithKey adds a key configuration.
 func (b *TestConfigBuilder) WithKey(name, provider, format, secret, baseURL string, enabled bool) *TestConfigBuilder {
 	key := config.KeyConfig{
-		Name:    name,
+		Name:     name,
 		Provider: provider,
-		Format:  format,
-		Secret:  secret,
-		BaseURL: baseURL,
-		Enabled: enabled,
+		Format:   format,
+		Secret:   secret,
+		Enabled:  enabled,
+	}
+	if baseURL != "" {
+		key.BaseURLs = map[string]string{format: baseURL}
 	}
 	if provider != "" {
-		// Apply preset if provider is set
+		// Apply preset fills BaseURLs, Format, Models from preset
 		preset, err := config.GetPreset(provider)
 		if err == nil {
-			if key.BaseURL == "" {
-				key.BaseURL = preset.BaseURL
+			if len(key.BaseURLs) == 0 {
+				key.BaseURLs = maps.Clone(preset.BaseURLs)
 			}
 			if key.Format == "" {
 				key.Format = preset.Format
@@ -95,8 +98,11 @@ func WriteTempConfig(t *testing.T, cfg *config.Config) string {
 		if key.Provider != "" {
 			content += "    provider: " + key.Provider + "\n"
 		}
-		if key.BaseURL != "" {
-			content += "    base_url: " + key.BaseURL + "\n"
+		if len(key.BaseURLs) > 0 {
+			content += "    base_urls:\n"
+			for proto, url := range key.BaseURLs {
+				content += "      " + proto + ": " + url + "\n"
+			}
 		}
 		if key.Format != "" {
 			content += "    format: " + key.Format + "\n"

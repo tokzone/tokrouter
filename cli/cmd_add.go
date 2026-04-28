@@ -81,7 +81,6 @@ func runAdd(c *cli.Command) error {
 		newKey = config.KeyConfig{
 			Provider: presetName,
 			Name:     serviceName,
-			BaseURL:  preset.BaseURL,
 			Format:   preset.Format,
 			Secret:   secret,
 			Enabled:  true,
@@ -125,11 +124,11 @@ func runAdd(c *cli.Command) error {
 		}
 
 		newKey = config.KeyConfig{
-			Name:    name,
-			BaseURL: baseURL,
-			Format:  format,
-			Secret:  secret,
-			Enabled: true,
+			Name:     name,
+			BaseURLs: map[string]string{format: baseURL},
+			Format:   format,
+			Secret:   secret,
+			Enabled:  true,
 		}
 
 		for _, m := range c.StringSlice("model") {
@@ -249,7 +248,7 @@ func runAddInteractive(c *cli.Command) error {
 		cfg, _ := config.Load(configPath)
 		serviceName = fmt.Sprintf("%s-%d", presetName, len(cfg.Keys)+1)
 
-		baseURL = preset.BaseURL
+		baseURL = preset.BaseURLs["openai"]
 		format = preset.Format
 
 		for _, pm := range preset.DefaultModels {
@@ -270,11 +269,13 @@ func runAddInteractive(c *cli.Command) error {
 
 	newKey := config.KeyConfig{
 		Name:    serviceName,
-		BaseURL: baseURL,
 		Format:  format,
 		Secret:  secret,
 		Enabled: true,
 		Models:  models,
+	}
+	if baseURL != "" {
+		newKey.BaseURLs = map[string]string{format: baseURL}
 	}
 
 	cfg.Keys = append(cfg.Keys, newKey)

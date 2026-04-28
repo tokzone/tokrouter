@@ -8,7 +8,7 @@
 # 1. 查看可用预置 Provider
 tr list presets
 
-# 2. 添加服务（预置模式：自动填充 BaseURL、Format、默认模型）
+# 2. 添加服务（预置模式：自动填充 BaseURLs、Format、默认模型）
 tr add openai --secret sk-xxx
 
 # 3. 查看已配置的服务
@@ -110,7 +110,7 @@ Available Models
 ```bash
 # 子命令
 tr show service <name>     # 查看服务详情（模型列表、优先级、别名）
-tr show preset <name>      # 查看预置详情（默认模型、BaseURL、地区）
+tr show preset <name>      # 查看预置详情（默认模型、BaseURLs、地区）
 tr show config             # 查看当前完整配置
 tr show health             # 查看端点健康状态
 tr show health --watch     # 实时刷新（每 2 秒）
@@ -130,7 +130,7 @@ tr show
 Service: openai-main
   Provider:  openai
   Format:    openai
-  BaseURL:   https://api.openai.com/v1
+  BaseURLs:  map[openai:https://api.openai.com/v1]
   Status:    enabled
   Models:    2
 
@@ -238,7 +238,8 @@ server:
 
 keys:
   - name: openai-main
-    base_url: "https://api.openai.com/v1"
+    base_urls:
+      openai: "https://api.openai.com/v1"
     secret: "${OPENAI_API_KEY}"
     format: openai                    # 单协议（向后兼容）
     enabled: true
@@ -247,7 +248,7 @@ keys:
       - name: gpt-4o
 
   - name: deepseek-main
-    provider: deepseek              # 预置模板，自动获取 BaseURL、Format、协议列表
+    provider: deepseek              # 预置模板，自动获取 BaseURLs、Format、协议列表
     secret: "${DEEPSEEK_API_KEY}"
     enabled: true
     models:
@@ -262,8 +263,8 @@ keys:
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
 | name | string | ✓ | 服务标识 |
-| provider | string | - | 预置 Provider 标识（如 openai, deepseek）。设置后 BaseURL、Format、协议列表自动从预置获取 |
-| base_url | string | - | API 基础 URL（自定义服务必需，预置模式自动填充） |
+| provider | string | - | 预置 Provider 标识（如 openai, deepseek）。设置后 BaseURLs、Format、协议列表自动从预置获取 |
+| base_urls | map | - | API 基础 URL 映射（自定义服务必需，预置模式自动填充）。格式: `{openai: "https://...", anthropic: "https://..."}` |
 | secret | string | ✓ | API 密钥（支持 `${VAR}` 环境变量） |
 | format | string | - | 单协议：openai/anthropic/gemini/cohere（预置模式自动填充） |
 | enabled | bool | - | 是否启用（默认 true） |
@@ -331,7 +332,7 @@ keys:
 
 ### 预设快速添加
 
-62+ 内置 Provider 预置，自动填充 BaseURL 和默认模型：
+62+ 内置 Provider 预置，自动填充 BaseURLs 和默认模型：
 
 ```bash
 tr list presets                # 浏览预置列表
@@ -365,14 +366,16 @@ keys:
 ```yaml
 keys:
   - name: openai-1
-    base_url: "https://api.openai.com/v1"
+    base_urls:
+      openai: "https://api.openai.com/v1"
     secret: "sk-xxx1"
     format: openai
     models:
       - name: gpt-4
         priority: 100       # 优先使用
   - name: openai-2
-    base_url: "https://api.openai.com/v1"
+    base_urls:
+      openai: "https://api.openai.com/v1"
     secret: "sk-xxx2"
     format: openai
     models:

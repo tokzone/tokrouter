@@ -114,7 +114,7 @@ Example: tr show service openai-1`)
 	pterm.DefaultSection.Printf("Service: %s", name)
 	pterm.Printf("  Provider:  %s\n", key.Provider)
 	pterm.Printf("  Format:    %s\n", key.Format)
-	pterm.Printf("  BaseURL:   %s\n", key.BaseURL)
+	pterm.Printf("  BaseURLs:  %v\n", key.BaseURLs)
 	pterm.Printf("  Status:    %s\n", func() string {
 		if key.Enabled {
 			return pterm.FgGreen.Sprint("enabled")
@@ -168,7 +168,7 @@ Use 'tr list presets' to see all presets.`)
 
 	pterm.DefaultSection.Printf("Preset: %s", name)
 	pterm.Printf("  Display:   %s\n", preset.DisplayName)
-	pterm.Printf("  BaseURL:   %s\n", preset.BaseURL)
+	pterm.Printf("  BaseURLs:  %v\n", preset.BaseURLs)
 	pterm.Printf("  Format:    %s\n", preset.Format)
 	pterm.Printf("  Region:    %s\n", preset.Region)
 	pterm.Printf("  DocURL:    %s\n", preset.DocURL)

@@ -14,7 +14,7 @@ import (
 
 // Helper functions for test data construction
 func newTestProvider() *provider.Provider {
-	return provider.NewProvider(1, "https://api.example.com")
+	return provider.NewProvider(1, provider.SingleBaseURL("https://api.example.com"))
 }
 
 func newTestAPIKey(prov *provider.Provider) *flux.APIKey {
@@ -153,8 +153,8 @@ func TestProviderStatuses(t *testing.T) {
 	// Clear registry
 	endpoint.GlobalRegistry().Clear()
 
-	prov1 := provider.NewProvider(1, "https://api.openai.com")
-	prov2 := provider.NewProvider(2, "https://api.anthropic.com")
+	prov1 := provider.NewProvider(1, provider.SingleBaseURL("https://api.openai.com"))
+	prov2 := provider.NewProvider(2, provider.SingleBaseURL("https://api.anthropic.com"))
 
 	ep1, _ := endpoint.NewEndpoint(1, prov1, "gpt-4", []provider.Protocol{provider.ProtocolOpenAI})
 	ep2, _ := endpoint.NewEndpoint(2, prov1, "gpt-3.5-turbo", []provider.Protocol{provider.ProtocolOpenAI})
@@ -247,7 +247,7 @@ func TestReload(t *testing.T) {
 		Keys: []config.KeyConfig{
 			{
 				Name:    "test",
-				BaseURL: "https://api.example.com",
+				BaseURLs: map[string]string{"openai": "https://api.example.com"},
 				Format:  "openai",
 				Secret:  "test-key",
 				Enabled: true,
@@ -291,7 +291,7 @@ func TestForwardOpenAI(t *testing.T) {
 
 func TestForwardAnthropic(t *testing.T) {
 	endpoint.GlobalRegistry().Clear()
-	prov := provider.NewProvider(1, "https://api.example.com")
+	prov := provider.NewProvider(1, provider.SingleBaseURL("https://api.example.com"))
 	endpoint.RegisterEndpoint(1, prov, "claude-3", []provider.Protocol{provider.ProtocolAnthropic})
 	k, _ := flux.NewAPIKey(prov, "test-key")
 	ue, _ := flux.NewUserEndpoint("claude-3", k, 0)
@@ -332,7 +332,7 @@ func TestServerConfig(t *testing.T) {
 	fullCfg := &config.Config{
 		Server: config.ServerConfig{Port: 9000, Host: "0.0.0.0"},
 		Keys: []config.KeyConfig{
-			{Name: "test", BaseURL: "https://api.example.com", Format: "openai", Secret: "test-key", Enabled: true,
+			{Name: "test", BaseURLs: map[string]string{"openai": "https://api.example.com"}, Format: "openai", Secret: "test-key", Enabled: true,
 				Models: []config.ModelConfig{{Name: "gpt-4"}}},
 		},
 		Log: config.LogConfig{Level: "info"},
@@ -380,7 +380,7 @@ func TestAliasMapping(t *testing.T) {
 		Keys: []config.KeyConfig{
 			{
 				Name:    "test",
-				BaseURL: "https://api.example.com",
+				BaseURLs: map[string]string{"openai": "https://api.example.com"},
 				Format:  "openai",
 				Secret:  "test-key",
 				Enabled: true,

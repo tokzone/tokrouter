@@ -17,7 +17,7 @@ import (
 
 func setupTestRouter() router.Router {
 	endpoint.GlobalRegistry().Clear()
-	prov := provider.NewProvider(1, "https://api.example.com")
+	prov := provider.NewProvider(1, provider.SingleBaseURL("https://api.example.com"))
 	endpoint.RegisterEndpoint(1, prov, "gpt-4", []provider.Protocol{provider.ProtocolOpenAI})
 	k, _ := flux.NewAPIKey(prov, "test-key")
 	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
@@ -71,7 +71,7 @@ func TestHandleHealthWithRouter(t *testing.T) {
 
 func TestHandleHealthDegraded(t *testing.T) {
 	endpoint.GlobalRegistry().Clear()
-	prov := provider.NewProvider(1, "https://api.example.com")
+	prov := provider.NewProvider(1, provider.SingleBaseURL("https://api.example.com"))
 	ep := endpoint.RegisterEndpoint(1, prov, "gpt-4", []provider.Protocol{provider.ProtocolOpenAI})
 	ep.MarkEndpointFail()
 	ep.MarkEndpointFail()

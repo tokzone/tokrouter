@@ -7,7 +7,7 @@ One config file. All your LLM APIs.
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/tokflux/tokrouter/release.yml?style=flat-square)](https://github.com/tokflux/tokrouter/actions)
-[![Version](https://img.shields.io/badge/Version-v0.7.0-blue?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-v0.7.1-blue?style=flat-square)]()
 
 [中文文档](README_CN.md)
 

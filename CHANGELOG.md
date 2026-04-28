@@ -5,6 +5,90 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-04-28
+
+### Changed — Multi-Protocol Architecture (fluxcore)
+- **Provider is now protocol-agnostic**: `Provider` struct only holds `ID` + `BaseURL` + health state. Protocol is no longer a Provider property.
+- **Endpoint holds Protocols as capability list**: `Endpoint.Protocols []Protocol` declares supported protocols. One endpoint can serve multiple protocols (e.g., DeepSeek = OpenAI + Anthropic).
+- **SelectProtocol for protocol resolution**: `SelectProtocol(input Protocol) Protocol` — direct pass-through when supported, fallback to `Protocols[0]` with auto-translation otherwise.
+- **Prepare/Do separation**: `DoFuncGen(client, inputProtocol)` pre-computes target protocol mapping for every endpoint, returns `DoFunc` closure. Hot path has zero protocol decision overhead.
+- **StreamDoFuncGen**: Same pre-computation pattern for streaming requests.
+- **`Client.Do()` / `Client.DoStream()` deprecated**: Use `DoFuncGen` / `StreamDoFuncGen` instead.
+
+### Changed — Router Interface
+- **`RouterService` → `Router`**: Interface renamed per Go convention. Four protocol-specific forwarding methods replace generic `Forward`/`ForwardStream`:
+  - `ForwardOpenAI(ctx, body, model)`
+  - `ForwardAnthropic(ctx, body, model)`
+  - `ForwardStreamOpenAI(ctx, body, model)`
+  - `ForwardStreamAnthropic(ctx, body, model)`
+- **Eliminated `clientFormat` parameter**: Protocol is bound at the HTTP handler level, not threaded through every call.
+- **DoFunc index tables**: `buildDoFuncs()` generates 4 maps (`openAIDoFuncs`, `anthropicDoFuncs`, `openAIStreamDoFuncs`, `anthropicStreamDoFuncs`) keyed by model name. O(1) lookup on hot path.
+- **Model alias with body rewriting**: `resolveAlias` + `rewriteModelInRequest` modify the request body so upstream receives the actual model name.
+- **Error classification**: Forward failures classified as `errors.CodeNoEndpoint` for proper 503 upstream_error responses.
+
+### Changed — Config
+- **`KeyConfig.Protocols` removed**: Protocol list is derived from the provider preset (via `Provider` field), not stored redundantly in each key.
+- **`ProtocolList()` derives from preset**: If `Provider` is set, looks up `GetPreset(k.Provider).Protocols`. Falls back to `Format` for custom services.
+- **`ProviderPreset.Protocols` field**: DeepSeek and OpenRouter presets declare `Protocols: [openai, anthropic]`.
+- **`Save()` writes `provider` field**: Config YAML now includes `provider` when set, no longer writes `protocols` on keys.
+
+### Changed — CLI
+- **Restructured commands**: Removed `init`, `keys`, `models`, `serve`, `status`, `summary`. New streamlined command set:
+  - `add`, `remove`, `list`, `show`, `config`, `assistant`, `start`, `stop`
+- **`add` command**: Preset mode automatically inherits protocols from the provider preset. Custom mode uses single `Format`. No `--protocols` flag needed.
+- **`show` command**: New subcommands — `service`, `preset`, `health --watch`, `usage --today/--week/--chart/--export`.
+- **`assistant` command** (new): Configure AI coding assistants (`claude-code`, `cursor`, `aider`, etc.) to use tokrouter. Supports `auto` detection and individual configuration.
+- **Shell completion**: Enabled via `tr completion bash|zsh|fish`.
+
+### Changed — Server
+- **Protocol-specific handlers**: `HandleOpenAI` → `POST /v1/chat/completions`, `HandleAnthropic` → `POST /v1/messages`. Protocol is compile-time constant in each handler.
+- **`HandleShutdown`** (new): `POST /shutdown` for graceful shutdown.
+- **Signal handling**: `signal.Stop()` deferred in Run() goroutine, preventing leaks.
+
+### Added — Presets
+- **`Protocols` field on presets**: DeepSeek and OpenRouter presets now declare `[openai, anthropic]` protocol capability.
+
+### Updated — Documentation
+- **USER_GUIDE.md**: New-user workflow, full CLI reference with output examples, config reflects provider-based protocol derivation.
+- **API.md**: Multi-protocol architecture section, URL-based protocol routing docs.
+- **fluxcore README** (EN/CN): Updated API signatures, Prepare/Do separation docs, protocol selection docs.
+
+### Migration Guide (v0.7.0 → v0.7.1)
+
+**Config**: Remove `protocols` field from keys. Use `provider` to inherit preset protocols.
+
+```yaml
+# Before (v0.7.0)
+keys:
+  - name: deepseek
+    base_url: "https://api.deepseek.com"
+    format: openai
+    protocols: [openai, anthropic]
+    secret: "${DEEPSEEK_API_KEY}"
+    models:
+      - name: deepseek-chat
+
+# After (v0.7.1)
+keys:
+  - name: deepseek
+    provider: deepseek
+    secret: "${DEEPSEEK_API_KEY}"
+    models:
+      - name: deepseek-chat
+```
+
+**CLI**: Old subcommands replaced:
+| v0.7.0 | v0.7.1 |
+|--------|--------|
+| `tr keys add openai --secret sk-xxx` | `tr add openai --secret sk-xxx` |
+| `tr keys list` | `tr list services` |
+| `tr keys remove <name>` | `tr remove <name>` |
+| `tr serve` | `tr start` |
+| `tr status [--watch]` | `tr show health [--watch]` |
+| `tr summary` | `tr show usage` |
+| `tr init` | (removed, use `tr add` interactively) |
+| `tr models` | `tr list models` |
+
 ## [0.7.0] - 2026-04-26
 
 ### Added

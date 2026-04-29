@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/tokzone/fluxcore"
 	"github.com/tokzone/tokrouter/config"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -58,7 +59,7 @@ func runAdd(c *cli.Command) error {
 	configPath := getConfigPath(c)
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		return err
+		cfg = &config.Config{}
 	}
 
 	var newKey config.KeyConfig
@@ -116,7 +117,7 @@ func runAdd(c *cli.Command) error {
 		if format == "" {
 			return fmt.Errorf("--format is required for custom service")
 		}
-		if !config.IsValidFormat(format) {
+		if _, err := fluxcore.ParseProtocol(format); err != nil {
 			return fmt.Errorf("invalid format: %s (must be openai/anthropic/gemini/cohere)", format)
 		}
 		if cfg.FindKey(name) != nil {
@@ -170,6 +171,13 @@ func runAddInteractive(c *cli.Command) error {
 	}
 	if err := survey.AskOne(selectPrompt, &selected); err != nil {
 		return err
+	}
+
+	// Load existing config, or start fresh on first run
+	configPath := getConfigPath(c)
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		cfg = &config.Config{}
 	}
 
 	var serviceName, baseURL, format, secret string
@@ -244,11 +252,9 @@ func runAddInteractive(c *cli.Command) error {
 			return fmt.Errorf("API key is required")
 		}
 
-		configPath := getConfigPath(c)
-		cfg, _ := config.Load(configPath)
 		serviceName = fmt.Sprintf("%s-%d", presetName, len(cfg.Keys)+1)
 
-		baseURL = preset.BaseURLs["openai"]
+		baseURL = preset.BaseURLs[fluxcore.ProtocolOpenAI.String()]
 		format = preset.Format
 
 		for _, pm := range preset.DefaultModels {
@@ -257,12 +263,6 @@ func runAddInteractive(c *cli.Command) error {
 	}
 
 	// Save
-	configPath := getConfigPath(c)
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return err
-	}
-
 	if cfg.FindKey(serviceName) != nil {
 		return fmt.Errorf("service '%s' already exists", serviceName)
 	}

@@ -4,7 +4,10 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -96,6 +99,39 @@ func loadPresets() map[string]ProviderPreset {
 		pf.Presets[name] = p
 	}
 	return pf.Presets
+}
+
+var externalPresetsOnce sync.Once
+
+// MergeExternalPresets reads presets.yaml from the given directory and
+// merges them into BuiltinPresets. Entries in the external file override
+// built-in ones with the same name; new entries are added.
+// If no presets.yaml exists in dir, it silently uses built-in only.
+// Multiple calls are no-ops — external presets are loaded at most once.
+func MergeExternalPresets(configDir string) {
+	externalPresetsOnce.Do(func() {
+		path := filepath.Join(configDir, "presets.yaml")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return
+		}
+		var pf presetsFile
+		if err := yaml.Unmarshal(data, &pf); err != nil {
+			slog.Warn("failed to parse external presets.yaml, using built-in", "error", err)
+			return
+		}
+		merged := 0
+		for name := range pf.Presets {
+			if name == "" {
+				continue
+			}
+			p := pf.Presets[name]
+			p.Name = name
+			BuiltinPresets[name] = p
+			merged++
+		}
+		slog.Info("merged external presets", "count", merged, "path", path)
+	})
 }
 
 // GetPreset returns a preset by name, or an error if not found.

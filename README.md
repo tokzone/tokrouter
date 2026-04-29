@@ -7,7 +7,7 @@ One config file. All your LLM APIs.
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/tokflux/tokrouter/release.yml?style=flat-square)](https://github.com/tokflux/tokrouter/actions)
-[![Version](https://img.shields.io/badge/Version-v0.7.2-blue?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-v0.7.3-blue?style=flat-square)]()
 
 [中文文档](README_CN.md)
 
@@ -217,12 +217,14 @@ tr start
 │                                             │
 │              fluxcore (domain layer)        │
 │                                             │
-│  flux/              Client + UserEndpoint   │
-│  endpoint/          Global registry         │
-│  provider/          Provider abstraction    │
+│  Router             Domain service          │
+│  ServiceEndpoint    Network CB aggregate    │
+│  Route              Model CB aggregate      │
+│  RouteTable         Pre-computed snapshot   │
+│  RouteRepository    CB state persistence    │
 │  message/           Request/Response IR     │
 │  errors/            Error classification    │
-│  translate/         Anthropic ↔ OpenAI      │
+│  translate/         Protocol conversion     │
 │                                             │
 └─────────────────────────────────────────────┘
 
@@ -235,44 +237,42 @@ tr start
 
 ```go
 // router/router.go - The aggregation service
-type Service struct {
-    mu            sync.RWMutex
-    state         *serviceState  // Atomic state container (swapped on reload)
-    usageSvc      *usage.Service
-    healthLogger  *slog.Logger
+type routerCtx struct {
+    oaTables   map[fluxcore.Model]*fluxcore.RouteTable
+    anthTables map[fluxcore.Model]*fluxcore.RouteTable
+    retryMax   int
 }
 
-type serviceState struct {
-    clients   map[string]*flux.Client  // Model -> flux.Client
-    aliasMap  map[string]string         // Model alias mapping
-    cfg       *config.Config            // Current configuration
-    retryMax  int                       // Retry configuration
+type router struct {
+    mu        sync.RWMutex
+    ctx       *routerCtx           // atomic.Pointer swapped on reload
+    oaRouter  *fluxcore.Router
+    anthRouter *fluxcore.Router
+    svcEPs    map[string]*fluxcore.ServiceEndpoint
+    routeRepo *fluxcore.RouteRepository  // CB state survives reload
+    usageSvc  *usage.Service
 }
 
-func NewService(userEndpoints []*flux.UserEndpoint, usageSvc *usage.Service, retryMax int) *Service {
-    // Build clients - each model has its own flux.Client
-    clients := buildClients(userEndpoints, retryMax)
-    return &Service{
-        state:        &serviceState{clients: clients, aliasMap: make(map[string]string), retryMax: retryMax},
-        usageSvc:     usageSvc,
-        healthLogger: slog.Default().With("component", "router"),
+func (r *router) ForwardOpenAI(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error) {
+    r.mu.RLock()
+    table := r.ctx.oaTables[fluxcore.Model(model)]
+    retryMax := r.ctx.retryMax
+    r.mu.RUnlock()
+
+    if table == nil {
+        return nil, nil, errors.New("no route for model")
     }
-}
 
-func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat provider.Protocol) ([]byte, *message.Usage, error) {
-    client, model, providerURL, req, err := s.prepareRequestWithDetails(rawReq)
-    s.healthLogger.Debug("forward starting", "model", model, "provider", providerURL)
-    resp, usage, err := client.Do(ctx, req, clientFormat)
+    route, resp, usage, err := r.oaRouter.Execute(ctx, table, body, retryMax)
     if err != nil {
-        s.healthLogger.Error("forward failed", "model", model, "provider", providerURL, "error", err.Error())
         return nil, nil, err
     }
-    s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL, false)  // Track cost with provider
+    r.usageSvc.RecordWithModelAndProvider(usage, model, route.SvcEP().Service().Name, false)
     return resp, usage, nil
 }
 ```
 
-All routing logic (endpoint selection, retry, fallback) handled by fluxcore's `flux.Client`.
+All routing logic (route selection, retry, failover, health feedback) handled by fluxcore's `Router.Execute`.
 
 ---
 
@@ -293,14 +293,20 @@ export OPENAI_API_BASE=http://127.0.0.1:8765/v1
 
 ## Circuit Breaker
 
+Two-layer circuit breaker in fluxcore:
+
 ```
-Model state machine (fluxcore):
+ServiceEndpoint layer (network):
+  DNS / Connection refused / Timeout → Immediate trip (threshold=1)
+  Recovery: 120s
 
-Healthy → Fail(1) → Fail(2) → Fail(3) → Unhealthy
-                                         ↓
-                                   60s auto recovery
+Route layer (model):
+  429 Rate Limit → Trip (threshold=3 cumulative)
+  500 Server Error → Trip (threshold=3 cumulative)
+  Recovery: 60s
 
-tokrouter auto-switches to next healthy model.
+tokrouter auto-switches to next healthy route.
+CB state survives config reload (SIGHUP) via RouteRepository.
 ```
 
 ---
@@ -338,7 +344,7 @@ keys:
 
 ## Hot Reload
 
-Reload config without restart:
+Reload config without restart. Circuit breaker state is preserved across reloads via `RouteRepository.FindOrCreate()`.
 
 ```bash
 kill -SIGHUP $(pidof tokrouter)
@@ -576,7 +582,7 @@ Yes, streaming is fully supported for both OpenAI and Anthropic formats.
 
 **Q: How does automatic fallback work?**
 
-Model fails 3 times → marked unhealthy → auto-switch to next healthy model. 60 seconds later, retry unhealthy model.
+Two-layer protection: network errors trip the service endpoint immediately (threshold=1, recovery=120s). Model errors (429/5xx) trip the route after 3 failures (recovery=60s). The router auto-switches to the next healthy route.
 
 ---
 
@@ -602,7 +608,7 @@ tr start
 
 | Project | Description |
 |---------|-------------|
-| **fluxcore** | LLM API Router Library (core routing engine) |
+| **fluxcore** | DDD-based LLM routing engine (ServiceEndpoint, Route, RouteTable, Router) |
 
 ---
 

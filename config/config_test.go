@@ -5,8 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tokzone/fluxcore/endpoint"
-	"github.com/tokzone/fluxcore/provider"
+	"github.com/tokzone/fluxcore"
 )
 
 func TestLoad(t *testing.T) {
@@ -167,54 +166,6 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestToUserEndpoints(t *testing.T) {
-	// Clear global registry before test
-	endpoint.GlobalRegistry().Clear()
-
-	cfg := &Config{
-		Keys: []KeyConfig{
-			{
-				Name:    "openai",
-				BaseURLs: map[string]string{FormatOpenAI: "https://api.openai.com/v1"},
-				Format:  "openai",
-				Secret:  "sk-test",
-				Enabled: true,
-				Models: []ModelConfig{
-					{Name: "gpt-4", Priority: 100},
-					{Name: "gpt-3.5", Priority: 10},
-				},
-			},
-			{
-				Name:    "disabled-key",
-				BaseURLs: map[string]string{FormatOpenAI: "https://api.example.com"},
-				Format:  "openai",
-				Secret:  "sk-disabled",
-				Enabled: false,
-				Models:  []ModelConfig{{Name: "model"}},
-			},
-		},
-	}
-
-	userEndpoints := cfg.ToUserEndpoints()
-
-	// Should have 2 user endpoints (from enabled key with 2 models)
-	if len(userEndpoints) != 2 {
-		t.Errorf("UserEndpoints count = %d, want 2", len(userEndpoints))
-	}
-
-	// Check first user endpoint
-	if userEndpoints[0].BaseURL(provider.ProtocolOpenAI) != "https://api.openai.com/v1" {
-		t.Errorf("BaseURL = %s, want https://api.openai.com/v1", userEndpoints[0].BaseURL(provider.ProtocolOpenAI))
-	}
-	if userEndpoints[0].Model() != "gpt-4" {
-		t.Errorf("Model = %s, want gpt-4", userEndpoints[0].Model())
-	}
-	// Priority is set from config
-	if userEndpoints[0].Priority() != 100 {
-		t.Errorf("Priority = %d, want 100", userEndpoints[0].Priority())
-	}
-}
-
 func TestResolvePaths(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -313,30 +264,6 @@ log:
 	}
 }
 
-func TestParseProtocol(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     string
-		wantError bool
-	}{
-		{"openai", "openai", false},
-		{"anthropic", "anthropic", false},
-		{"gemini", "gemini", false},
-		{"cohere", "cohere", false},
-		{"invalid", "invalid", true},
-		{"empty", "", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := ParseProtocol(tt.input)
-			if (err != nil) != tt.wantError {
-				t.Errorf("ParseProtocol(%q) error = %v, wantError %v", tt.input, err, tt.wantError)
-			}
-		})
-	}
-}
-
 func TestAliasMap(t *testing.T) {
 	cfg := &Config{
 		Keys: []KeyConfig{
@@ -403,29 +330,6 @@ func TestSave(t *testing.T) {
 	}
 }
 
-func TestIsValidFormat(t *testing.T) {
-	tests := []struct {
-		format string
-		want   bool
-	}{
-		{FormatOpenAI, true},
-		{FormatAnthropic, true},
-		{FormatGemini, true},
-		{FormatCohere, true},
-		{"invalid", false},
-		{"", false},
-		{"OPENAI", false}, // case sensitive
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.format, func(t *testing.T) {
-			if got := IsValidFormat(tt.format); got != tt.want {
-				t.Errorf("IsValidFormat(%s) = %v, want %v", tt.format, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestLoadWithPreset(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -476,13 +380,13 @@ log:
 	// Check that preset models are filled
 	foundGPT4o := false
 	for _, m := range cfg.Keys[0].Models {
-		if m.Name == "gpt-4o" {
+		if m.Name == "gpt-5.4" {
 			foundGPT4o = true
 			break
 		}
 	}
 	if !foundGPT4o {
-		t.Errorf("Key[0] Models should include gpt-4o from preset")
+		t.Errorf("Key[0] Models should include gpt-5.4 from preset")
 	}
 
 	// Check second key (deepseek with custom models)
@@ -574,7 +478,155 @@ func TestListPresets(t *testing.T) {
 	}
 }
 
-func TestInvalidPreset(t *testing.T) {
+func TestConvertBaseURLs(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]string
+		want  map[string]string // protocol name → url
+	}{
+		{
+			name:  "single openai",
+			input: map[string]string{"openai": "https://api.openai.com/v1"},
+			want:  map[string]string{"openai": "https://api.openai.com/v1"},
+		},
+		{
+			name: "multi protocol",
+			input: map[string]string{
+				"openai":    "https://api.openai.com/v1",
+				"anthropic": "https://api.anthropic.com/v1",
+			},
+			want: map[string]string{
+				"openai":    "https://api.openai.com/v1",
+				"anthropic": "https://api.anthropic.com/v1",
+			},
+		},
+		{
+			name:  "invalid protocol skipped",
+			input: map[string]string{"invalid": "https://example.com", "openai": "https://api.openai.com"},
+			want:  map[string]string{"openai": "https://api.openai.com"},
+		},
+		{
+			name:  "empty input",
+			input: map[string]string{},
+			want:  map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := convertBaseURLs(tt.input)
+			if len(got) != len(tt.want) {
+				t.Errorf("got %d entries, want %d", len(got), len(tt.want))
+			}
+			for protoStr, url := range tt.want {
+				p, _ := fluxcore.ParseProtocol(protoStr)
+				if got[p] != url {
+					t.Errorf("got[%s] = %s, want %s", protoStr, got[p], url)
+				}
+			}
+		})
+	}
+}
+
+func TestToRoutes(t *testing.T) {
+	cfg := &Config{
+		Keys: []KeyConfig{
+			{
+				Name:    "openai",
+				BaseURLs: map[string]string{"openai": "https://api.openai.com/v1"},
+				Format:  "openai",
+				Secret:  "sk-openai",
+				Enabled: true,
+				Models: []ModelConfig{
+					{Name: "gpt-4", Priority: 0},
+					{Name: "gpt-3.5", Priority: 10},
+				},
+			},
+			{
+				Name:    "disabled-key",
+				BaseURLs: map[string]string{"openai": "https://api.disabled.com"},
+				Format:  "openai",
+				Secret:  "sk-disabled",
+				Enabled: false,
+				Models:  []ModelConfig{{Name: "gpt-4"}},
+			},
+		},
+	}
+
+	svcEPs := make(map[string]*fluxcore.ServiceEndpoint)
+	calls := make(map[string]int)
+
+	routes := cfg.ToRoutes(svcEPs, func(desc fluxcore.RouteDesc) *fluxcore.Route {
+		calls[desc.IdentityKey()]++
+		return fluxcore.NewRoute(desc)
+	})
+
+	if len(routes) != 2 {
+		t.Fatalf("got %d routes, want 2 (disabled key excluded)", len(routes))
+	}
+
+	// gpt-4 has priority 0, gpt-3.5 has priority 10
+	if routes[0].Desc().Model != "gpt-4" || routes[1].Desc().Model != "gpt-3.5" {
+		t.Error("route order wrong")
+	}
+	if routes[0].Desc().Priority != 0 {
+		t.Errorf("gpt-4 priority = %d, want 0", routes[0].Desc().Priority)
+	}
+	if routes[0].Desc().Credential != "sk-openai" {
+		t.Errorf("credential = %s, want sk-openai", routes[0].Desc().Credential)
+	}
+
+	// ServiceEndpoint should be created and shared
+	if se, ok := svcEPs["openai"]; !ok || se == nil {
+		t.Error("openai ServiceEndpoint not created in svcEPs")
+	}
+	if len(svcEPs) != 1 {
+		t.Errorf("svcEPs count = %d, want 1", len(svcEPs))
+	}
+
+	// Each unique identity key should trigger exactly one FindOrCreate call
+	expectedKeys := []string{"openai/gpt-4/sk-openai", "openai/gpt-3.5/sk-openai"}
+	for _, key := range expectedKeys {
+		if calls[key] != 1 {
+			t.Errorf("FindOrCreate called %d times for %s, want 1", calls[key], key)
+		}
+	}
+}
+
+func TestFindKey(t *testing.T) {
+	cfg := &Config{
+		Keys: []KeyConfig{
+			{Name: "key1"},
+			{Name: "key2"},
+		},
+	}
+	if k := cfg.FindKey("key1"); k == nil || k.Name != "key1" {
+		t.Error("FindKey should find existing key")
+	}
+	if k := cfg.FindKey("nonexistent"); k != nil {
+		t.Error("FindKey should return nil for missing key")
+	}
+}
+
+func TestFindKeyIndex(t *testing.T) {
+	cfg := &Config{
+		Keys: []KeyConfig{
+			{Name: "key1"},
+			{Name: "key2"},
+		},
+	}
+	if idx := cfg.FindKeyIndex("key1"); idx != 0 {
+		t.Errorf("FindKeyIndex(key1) = %d, want 0", idx)
+	}
+	if idx := cfg.FindKeyIndex("key2"); idx != 1 {
+		t.Errorf("FindKeyIndex(key2) = %d, want 1", idx)
+	}
+	if idx := cfg.FindKeyIndex("nonexistent"); idx != -1 {
+		t.Errorf("FindKeyIndex(nonexistent) = %d, want -1", idx)
+	}
+}
+
+func TestLoadWithInvalidProvider(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 
@@ -599,5 +651,15 @@ log:
 	_, err := Load(configPath)
 	if err == nil {
 		t.Errorf("Load with invalid provider should return error")
+	}
+}
+
+func TestLoadFileNotFound(t *testing.T) {
+	cfg, err := Load("/nonexistent/path/config.yaml")
+	if err == nil {
+		t.Error("Load should return error for non-existent file")
+	}
+	if cfg != nil {
+		t.Error("cfg should be nil when Load returns error")
 	}
 }

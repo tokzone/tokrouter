@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/tokzone/tokrouter/config"
+
 	"github.com/pterm/pterm"
 	"github.com/urfave/cli/v3"
 )
@@ -49,7 +51,7 @@ var assistantCmd = &cli.Command{
 			pterm.Println("  tr assistant auto [--url URL]      Auto-detect and configure all")
 			pterm.Println("  tr assistant <name> [--url URL]    Configure a specific assistant")
 			pterm.Println()
-			pterm.Println("Supported names: claude-code, cursor, aider, windsurf, cline, continue")
+			pterm.Println("Supported names: claude-code, cursor, aider, windsurf, cline, continue, codex")
 			return nil
 		}
 		return runAssistant(cmd)
@@ -100,13 +102,22 @@ func runAssistant(c *cli.Command) error {
 		}
 	}
 
+	model, err := selectAssistantModel(c)
+	if err != nil {
+		pterm.Warning.Printf("Model selection skipped: %v\n", err)
+		model = ""
+	}
+
 	pterm.DefaultSection.Printf("Configuring %s", a.DisplayName)
 	pterm.Printf("  Tokrouter URL: %s\n", url)
+	if model != "" {
+		pterm.Printf("  Default model: %s\n", model)
+	}
 
 	configPath := getAssistantConfigPath(a)
 	pterm.Printf("  Config file:   %s\n", configPath)
 
-	content := generateAssistantConfig(a, url)
+	content := generateAssistantConfig(a, url, model)
 	pterm.Println()
 	pterm.Info.Println("Will write:")
 	pterm.Println(content)
@@ -117,7 +128,7 @@ func runAssistant(c *cli.Command) error {
 		return nil
 	}
 
-	if err := writeAssistantConfig(a, url); err != nil {
+	if err := writeAssistantConfig(a, url, model); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 
@@ -125,6 +136,12 @@ func runAssistant(c *cli.Command) error {
 	pterm.Println()
 	pterm.Info.Printf("Restart %s to use tokrouter\n", a.DisplayName)
 	pterm.Println(getAssistantRestartHint(a))
+
+	if a.ModelNote != "" {
+		note := resolveTemplate(a.ModelNote, url, model)
+		pterm.Println()
+		pterm.Info.Println(note)
+	}
 	return nil
 }
 
@@ -149,8 +166,14 @@ func runAssistantAuto(c *cli.Command) error {
 		return nil
 	}
 
+	model := findDefaultModel(c)
+
 	pterm.Println()
-	pterm.Info.Printf("Will configure %d assistants with URL: %s\n", len(installed), url)
+	if model != "" {
+		pterm.Info.Printf("Will configure %d assistants with URL: %s (model: %s)\n", len(installed), url, model)
+	} else {
+		pterm.Info.Printf("Will configure %d assistants with URL: %s\n", len(installed), url)
+	}
 
 	if !askConfirm("Continue?", true) {
 		pterm.Info.Println("Cancelled")
@@ -159,11 +182,15 @@ func runAssistantAuto(c *cli.Command) error {
 
 	pterm.Println()
 	for _, a := range installed {
-		if err := writeAssistantConfig(&a, url); err != nil {
+		if err := writeAssistantConfig(&a, url, model); err != nil {
 			pterm.Error.Printf("Failed to configure %s: %v\n", a.DisplayName, err)
 			continue
 		}
 		pterm.Success.Printf("✓ %s: configured\n", a.DisplayName)
+		if a.ModelNote != "" {
+			note := resolveTemplate(a.ModelNote, url, model)
+			pterm.Printf("  Hint: %s\n", note)
+		}
 	}
 
 	pterm.Println()
@@ -172,4 +199,22 @@ func runAssistantAuto(c *cli.Command) error {
 		pterm.Printf("  %s: %s\n", a.DisplayName, getAssistantRestartHint(&a))
 	}
 	return nil
+}
+
+// findDefaultModel reads the config and returns the first model from the first enabled key.
+// Returns empty string if no config or no models found.
+func findDefaultModel(c *cli.Command) string {
+	cfg, err := config.Load(getConfigPath(c))
+	if err != nil || cfg == nil {
+		return ""
+	}
+	for _, k := range cfg.Keys {
+		if !k.Enabled {
+			continue
+		}
+		if len(k.Models) > 0 {
+			return k.Models[0].Name
+		}
+	}
+	return ""
 }

@@ -5,14 +5,16 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tokzone/fluxcore/endpoint"
-	"github.com/tokzone/fluxcore/flux"
-	"github.com/tokzone/fluxcore/provider"
 	"github.com/tokzone/tokrouter/config"
 )
 
 func TestConcurrentProviderStatuses(t *testing.T) {
-	svc := setupTestRouter("gpt-4")
+	cfg := singleKeyConfig("gpt-4")
+	svc, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer svc.Close()
 
 	var wg sync.WaitGroup
 	var errorCount atomic.Int32
@@ -34,30 +36,30 @@ func TestConcurrentProviderStatuses(t *testing.T) {
 }
 
 func TestConcurrentReload(t *testing.T) {
-	svc := setupTestRouter("gpt-4")
+	cfg := singleKeyConfig("gpt-4")
+	svc, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer svc.Close()
+
+	r := svc.(*router)
 
 	var wg sync.WaitGroup
 	var successCount atomic.Int32
 
 	for i := 0; i < 5; i++ {
-		cfg := &config.Config{
-			Keys: []config.KeyConfig{
-				{
-					Name:    "test",
-					BaseURLs: map[string]string{"openai": "https://api.example.com"},
-					Format:  "openai",
-					Secret:  "test-key",
-					Enabled: true,
-					Models: []config.ModelConfig{
-						{Name: "gpt-4", Priority: int64(i)},
-					},
-				},
+		cfg := testConfig(config.KeyConfig{
+			Name:    "test",
+			BaseURLs: map[string]string{"openai": "https://api.example.com"},
+			Format:  "openai",
+			Secret:  "test-key",
+			Enabled: true,
+			Models: []config.ModelConfig{
+				{Name: "gpt-4", Priority: int64(i)},
 			},
-			Server: config.ServerConfig{Port: 8765},
-			Router: config.RouterConfig{Retry: config.RetryConfig{MaxRetries: 2}},
-			Log:    config.LogConfig{Level: "info"},
-		}
-		if err := svc.Reload(cfg); err == nil {
+		})
+		if err := r.Reload(cfg); err == nil {
 			successCount.Add(1)
 		}
 	}
@@ -77,17 +79,24 @@ func TestConcurrentReload(t *testing.T) {
 		t.Errorf("expected 5 reloads succeeded, got %d", successCount.Load())
 	}
 
-	svc.mu.RLock()
-	_, ok := svc.ctx.openAIDoFuncs["gpt-4"]
-	svc.mu.RUnlock()
+	r.mu.RLock()
+	_, ok := r.ctx.oaTables["gpt-4"]
+	r.mu.RUnlock()
 
 	if !ok {
-		t.Error("gpt-4 DoFunc should exist after reloads")
+		t.Error("gpt-4 table should exist after reloads")
 	}
 }
 
-func TestConcurrentReadDoFuncs(t *testing.T) {
-	svc := setupTestRouter("gpt-4")
+func TestConcurrentReadTables(t *testing.T) {
+	cfg := singleKeyConfig("gpt-4")
+	svc, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer svc.Close()
+
+	r := svc.(*router)
 
 	var wg sync.WaitGroup
 	var errorCount atomic.Int32
@@ -95,9 +104,9 @@ func TestConcurrentReadDoFuncs(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			svc.mu.RLock()
-			_, ok := svc.ctx.openAIDoFuncs["gpt-4"]
-			svc.mu.RUnlock()
+			r.mu.RLock()
+			_, ok := r.ctx.oaTables["gpt-4"]
+			r.mu.RUnlock()
 			if !ok {
 				errorCount.Add(1)
 			}
@@ -106,19 +115,25 @@ func TestConcurrentReadDoFuncs(t *testing.T) {
 	wg.Wait()
 
 	if errorCount.Load() > 0 {
-		t.Errorf("got %d errors from concurrent DoFunc reads", errorCount.Load())
+		t.Errorf("got %d errors from concurrent table reads", errorCount.Load())
 	}
 }
 
 func TestReloadPreservesRetryMax(t *testing.T) {
-	endpoint.GlobalRegistry().Clear()
-	prov := newTestProvider()
-	endpoint.RegisterEndpoint(1, prov, "gpt-4", []provider.Protocol{provider.ProtocolOpenAI})
-	k := newTestAPIKey(prov)
-	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
+	cfg := singleKeyConfig("gpt-4")
+	cfg.Router.Retry.MaxRetries = 5
+	svc, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer svc.Close()
 
-	t.Run("skip retryMax check", func(t *testing.T) {
-		_ = New([]*flux.UserEndpoint{ue}, nil, 5, nil, nil, nil)
-		// retryMax is now stored in routerCtx, not directly accessible via client
-	})
+	r := svc.(*router)
+	r.mu.RLock()
+	retryMax := r.ctx.retryMax
+	r.mu.RUnlock()
+
+	if retryMax != 5 {
+		t.Errorf("retryMax = %d, want 5", retryMax)
+	}
 }

@@ -36,6 +36,9 @@ func NewServer(routerSvc router.Router, traceCfg config.TraceConfig, configPath 
 
 	mux.HandleFunc("/v1/chat/completions", traceMiddleware(HandleOpenAI(routerSvc)))
 	mux.HandleFunc("/v1/messages", traceMiddleware(HandleAnthropic(routerSvc)))
+	mux.HandleFunc("/v1/responses", traceMiddleware(HandleResponses(routerSvc)))
+	mux.HandleFunc("/v1/models", HandleModels())
+	mux.HandleFunc("/v1/models/", HandleModels())
 	mux.HandleFunc("/status", traceMiddleware(HandleStatus(routerSvc)))
 	mux.HandleFunc("/health", traceMiddleware(HandleHealth(routerSvc)))
 

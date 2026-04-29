@@ -2,6 +2,8 @@ package usage
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -21,6 +23,10 @@ type SQLiteStore struct {
 
 // NewStore creates a new SQLite store
 func NewStore(dbPath string) (*SQLiteStore, error) {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return nil, fmt.Errorf("create db directory: %w", err)
+	}
+
 	// Use WAL mode for better concurrency
 	dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})

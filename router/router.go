@@ -1,7 +1,6 @@
 package router
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,22 +9,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tokzone/fluxcore/endpoint"
+	"github.com/tokzone/fluxcore"
 	"github.com/tokzone/fluxcore/errors"
-	"github.com/tokzone/fluxcore/flux"
 	"github.com/tokzone/fluxcore/message"
-	"github.com/tokzone/fluxcore/provider"
 
 	"github.com/tokzone/tokrouter/config"
 	"github.com/tokzone/tokrouter/usage"
 )
 
-// Router defines the interface for routing operations.
 type Router interface {
 	ForwardOpenAI(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error)
 	ForwardAnthropic(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error)
-	ForwardStreamOpenAI(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error)
-	ForwardStreamAnthropic(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error)
+	ForwardStreamOpenAI(ctx context.Context, body []byte, model string) (*fluxcore.StreamResult, string, string, error)
+	ForwardStreamAnthropic(ctx context.Context, body []byte, model string) (*fluxcore.StreamResult, string, string, error)
 	RecordStreamUsage(usage *message.Usage, model string, providerURL string)
 	ProviderStatuses() []ProviderStatus
 	Stats(filter usage.QueryFilter) ([]usage.StatRow, error)
@@ -37,108 +33,65 @@ type Router interface {
 // router is the unexported implementation of Router.
 type router struct {
 	mu           sync.RWMutex
-	ctx          *routerCtx // Atomic state container (swapped on reload)
+	ctx          *routerCtx
+	oaRouter     *fluxcore.Router
+	anthRouter   *fluxcore.Router
+	svcEPs       map[string]*fluxcore.ServiceEndpoint
+	routeRepo    *fluxcore.RouteRepository
 	usageSvc     *usage.Service
 	healthLogger *slog.Logger
 }
 
-// Ensure router implements Router at compile time.
 var _ Router = (*router)(nil)
 
 // routerCtx holds the pre-prepared routing context, swapped atomically on reload.
 type routerCtx struct {
-	openAIDoFuncs       map[string]flux.DoFunc
-	anthropicDoFuncs    map[string]flux.DoFunc
-	openAIStreamDoFuncs map[string]flux.StreamDoFunc
-	anthropicStreamDoFuncs map[string]flux.StreamDoFunc
-	aliases             map[string]string
-	cfg                 *config.Config
-	retryMax            int
+	oaTables   map[fluxcore.Model]*fluxcore.RouteTable
+	anthTables map[fluxcore.Model]*fluxcore.RouteTable
+	aliases    map[string]string
+	cfg        *config.Config
+	retryMax   int
 }
 
-// ProviderStatus represents runtime status of a provider (separated from config)
+// ProviderStatus represents runtime status of a provider.
 type ProviderStatus struct {
-	Name     string // Provider identifier (PrimaryBaseURL)
-	Protocol string // Protocol format
-	Healthy  bool   // Overall health status
+	Name     string
+	Protocol string
+	Healthy  bool
 	Models   []ModelStatus
 }
 
-// ModelStatus represents status of a model (DTO)
+// ModelStatus represents status of a model.
 type ModelStatus struct {
 	Name    string
 	Healthy bool
 }
 
-// New creates a Router from user endpoints.
-func New(userEndpoints []*flux.UserEndpoint, usageSvc *usage.Service, retryMax int, httpCfg *config.HTTPConfig, aliases map[string]string, cfg *config.Config) Router {
-	if aliases == nil {
-		aliases = make(map[string]string)
-	}
-	openAIDoFuncs, anthropicDoFuncs, openAIStreamDoFuncs, anthropicStreamDoFuncs := buildDoFuncs(userEndpoints, retryMax, httpCfg)
+// New creates a Router from config.
+func New(cfg *config.Config, usageSvc *usage.Service) (Router, error) {
+	svcEPs := make(map[string]*fluxcore.ServiceEndpoint)
+	repo := fluxcore.NewRouteRepository()
+
+	httpClient := buildHTTPClient(&cfg.HTTP)
+
+	oaRouter := fluxcore.NewRouter(fluxcore.ProtocolOpenAI, fluxcore.WithHTTPClient(httpClient))
+	anthRouter := fluxcore.NewRouter(fluxcore.ProtocolAnthropic, fluxcore.WithHTTPClient(httpClient))
+
+	ctx := buildRouterCtx(cfg, svcEPs, repo)
+
 	return &router{
-		ctx: &routerCtx{
-			openAIDoFuncs:          openAIDoFuncs,
-			anthropicDoFuncs:       anthropicDoFuncs,
-			openAIStreamDoFuncs:    openAIStreamDoFuncs,
-			anthropicStreamDoFuncs: anthropicStreamDoFuncs,
-			aliases:                aliases,
-			cfg:                    cfg,
-			retryMax:               retryMax,
-		},
+		ctx:          ctx,
+		oaRouter:     oaRouter,
+		anthRouter:   anthRouter,
+		svcEPs:       svcEPs,
+		routeRepo:    repo,
 		usageSvc:     usageSvc,
 		healthLogger: slog.Default().With("component", "router"),
-	}
-}
-
-// buildDoFuncs groups user endpoints by model, creates a flux.Client for each model,
-// and pre-generates DoFunc instances for both OpenAI and Anthropic input protocols.
-func buildDoFuncs(userEndpoints []*flux.UserEndpoint, retryMax int, httpCfg *config.HTTPConfig) (map[string]flux.DoFunc, map[string]flux.DoFunc, map[string]flux.StreamDoFunc, map[string]flux.StreamDoFunc) {
-	modelEndpoints := make(map[string][]*flux.UserEndpoint)
-	for _, ue := range userEndpoints {
-		modelEndpoints[ue.Model()] = append(modelEndpoints[ue.Model()], ue)
-	}
-
-	var httpOpts []flux.Option
-	if httpCfg != nil && httpCfg.Timeout != "" {
-		httpOpts = append(httpOpts, flux.WithHTTPClient(buildHTTPClient(httpCfg)))
-	}
-
-	openAIDoFuncs := make(map[string]flux.DoFunc)
-	anthropicDoFuncs := make(map[string]flux.DoFunc)
-	openAIStreamDoFuncs := make(map[string]flux.StreamDoFunc)
-	anthropicStreamDoFuncs := make(map[string]flux.StreamDoFunc)
-
-	for model, ues := range modelEndpoints {
-		opts := append([]flux.Option{flux.WithRetryMax(retryMax)}, httpOpts...)
-		client := flux.NewClient(ues, opts...)
-		openAIDoFuncs[model] = flux.DoFuncGen(client, provider.ProtocolOpenAI)
-		anthropicDoFuncs[model] = flux.DoFuncGen(client, provider.ProtocolAnthropic)
-		openAIStreamDoFuncs[model] = flux.StreamDoFuncGen(client, provider.ProtocolOpenAI)
-		anthropicStreamDoFuncs[model] = flux.StreamDoFuncGen(client, provider.ProtocolAnthropic)
-	}
-	return openAIDoFuncs, anthropicDoFuncs, openAIStreamDoFuncs, anthropicStreamDoFuncs
-}
-
-// buildHTTPClient creates a custom HTTP client from HTTPConfig.
-func buildHTTPClient(cfg *config.HTTPConfig) *http.Client {
-	timeout, _ := time.ParseDuration(cfg.Timeout)
-	idleTimeout, _ := time.ParseDuration(cfg.IdleConnTimeout)
-
-	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			MaxIdleConns:        cfg.MaxIdleConns,
-			MaxIdleConnsPerHost: cfg.MaxIdleConnsPerHost,
-			IdleConnTimeout:     idleTimeout,
-		},
-	}
+	}, nil
 }
 
 // NewFromConfig creates a Router from config (factory method).
 func NewFromConfig(cfg *config.Config) (Router, error) {
-	userEndpoints := cfg.ToUserEndpoints()
-
 	var usageSvc *usage.Service
 	if cfg.Stats.Enabled {
 		store, err := usage.NewStore(cfg.Stats.DBPath)
@@ -148,17 +101,41 @@ func NewFromConfig(cfg *config.Config) (Router, error) {
 		usageSvc = usage.NewService(store)
 	}
 
-	var httpCfg *config.HTTPConfig
-	if cfg.HTTP.Timeout != "" {
-		httpCfg = &cfg.HTTP
-	}
-
-	svc := New(userEndpoints, usageSvc, cfg.Router.Retry.MaxRetries, httpCfg, cfg.AliasMap(), cfg)
-
-	return svc, nil
+	return New(cfg, usageSvc)
 }
 
-// ServerConfig returns server configuration.
+func buildRouterCtx(cfg *config.Config, svcEPs map[string]*fluxcore.ServiceEndpoint, repo *fluxcore.RouteRepository) *routerCtx {
+	routes := cfg.ToRoutes(svcEPs, func(desc fluxcore.RouteDesc) *fluxcore.Route {
+		return repo.FindOrCreate(desc.IdentityKey(), func() *fluxcore.Route {
+			return fluxcore.NewRoute(desc)
+		})
+	})
+
+	oaTables := make(map[fluxcore.Model]*fluxcore.RouteTable)
+	anthTables := make(map[fluxcore.Model]*fluxcore.RouteTable)
+
+	modelRoutes := make(map[fluxcore.Model][]*fluxcore.Route)
+	for _, route := range routes {
+		m := route.Desc().Model
+		modelRoutes[m] = append(modelRoutes[m], route)
+	}
+
+	for model, rts := range modelRoutes {
+		oaTables[model] = fluxcore.NewRouteTable(rts, fluxcore.ProtocolOpenAI)
+		anthTables[model] = fluxcore.NewRouteTable(rts, fluxcore.ProtocolAnthropic)
+	}
+
+	retryMax := cfg.Router.Retry.MaxRetries
+
+	return &routerCtx{
+		oaTables:   oaTables,
+		anthTables: anthTables,
+		aliases:    cfg.AliasMap(),
+		cfg:        cfg,
+		retryMax:   retryMax,
+	}
+}
+
 func (s *router) ServerConfig() config.ServerConfig {
 	s.mu.RLock()
 	cfg := s.ctx.cfg
@@ -176,69 +153,74 @@ func (s *router) ServerConfig() config.ServerConfig {
 	}
 }
 
-// ForwardOpenAI forwards a non-streaming request received via the OpenAI endpoint.
 func (s *router) ForwardOpenAI(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error) {
-	return s.forward(ctx, body, model, s.ctx.openAIDoFuncs)
+	return s.forward(ctx, body, model, s.ctx.oaTables, s.oaRouter)
 }
 
-// ForwardAnthropic forwards a non-streaming request received via the Anthropic endpoint.
 func (s *router) ForwardAnthropic(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error) {
-	return s.forward(ctx, body, model, s.ctx.anthropicDoFuncs)
+	return s.forward(ctx, body, model, s.ctx.anthTables, s.anthRouter)
 }
 
-func (s *router) forward(ctx context.Context, body []byte, model string, doFuncs map[string]flux.DoFunc) ([]byte, *message.Usage, error) {
+func (s *router) forward(ctx context.Context, body []byte, model string, tables map[fluxcore.Model]*fluxcore.RouteTable, r *fluxcore.Router) ([]byte, *message.Usage, error) {
 	model, body = resolveAlias(model, body, s.ctx.aliases)
 
-	doFunc, ok := doFuncs[model]
+	table, ok := tables[fluxcore.Model(model)]
 	if !ok {
 		return nil, nil, errors.Wrap(errors.CodeNoEndpoint, fmt.Sprintf("no endpoint for model: %s", model), nil)
 	}
 
 	s.healthLogger.Debug("forward starting", "model", model)
 
-	resp, usage, providerURL, err := doFunc(ctx, body)
+	route, resp, usage, err := r.Execute(ctx, table, body, s.ctx.retryMax)
 	if err != nil {
-		s.healthLogger.Error("forward failed", "model", model, "provider", providerURL, "error", err.Error())
+		if route != nil {
+			s.healthLogger.Error("forward failed", "model", model, "provider", route.SvcEP().Service().Name, "error", err.Error())
+		} else {
+			s.healthLogger.Error("forward failed", "model", model, "error", err.Error())
+		}
 		return nil, nil, err
 	}
 
 	if s.usageSvc != nil && usage != nil {
-		s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL, false)
+		s.usageSvc.RecordWithModelAndProvider(usage, model, route.SvcEP().Service().Name, false)
 	}
 
 	return resp, usage, nil
 }
 
-// ForwardStreamOpenAI forwards a streaming request received via the OpenAI endpoint.
-func (s *router) ForwardStreamOpenAI(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error) {
-	return s.forwardStream(ctx, body, model, s.ctx.openAIStreamDoFuncs)
+func (s *router) ForwardStreamOpenAI(ctx context.Context, body []byte, model string) (*fluxcore.StreamResult, string, string, error) {
+	return s.forwardStream(ctx, body, model, s.ctx.oaTables, s.oaRouter)
 }
 
-// ForwardStreamAnthropic forwards a streaming request received via the Anthropic endpoint.
-func (s *router) ForwardStreamAnthropic(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error) {
-	return s.forwardStream(ctx, body, model, s.ctx.anthropicStreamDoFuncs)
+func (s *router) ForwardStreamAnthropic(ctx context.Context, body []byte, model string) (*fluxcore.StreamResult, string, string, error) {
+	return s.forwardStream(ctx, body, model, s.ctx.anthTables, s.anthRouter)
 }
 
-func (s *router) forwardStream(ctx context.Context, body []byte, model string, streamDoFuncs map[string]flux.StreamDoFunc) (*flux.StreamResult, string, string, error) {
+func (s *router) forwardStream(ctx context.Context, body []byte, model string, tables map[fluxcore.Model]*fluxcore.RouteTable, r *fluxcore.Router) (*fluxcore.StreamResult, string, string, error) {
 	model, body = resolveAlias(model, body, s.ctx.aliases)
 
-	streamDoFunc, ok := streamDoFuncs[model]
+	table, ok := tables[fluxcore.Model(model)]
 	if !ok {
 		return nil, "", "", errors.Wrap(errors.CodeNoEndpoint, fmt.Sprintf("no endpoint for model: %s", model), nil)
 	}
 
 	s.healthLogger.Debug("forward stream starting", "model", model)
 
-	result, _, providerURL, err := streamDoFunc(ctx, body)
+	route, result, err := r.ExecuteStream(ctx, table, body, s.ctx.retryMax)
 	if err != nil {
-		s.healthLogger.Error("forward stream failed", "model", model, "provider", providerURL, "error", err.Error())
+		if route != nil {
+			s.healthLogger.Error("forward stream failed", "model", model, "provider", route.SvcEP().Service().Name, "error", err.Error())
+		} else {
+			s.healthLogger.Error("forward stream failed", "model", model, "error", err.Error())
+		}
 		return nil, "", "", err
 	}
 
+	providerURL := route.SvcEP().Service().Name
 	return result, model, providerURL, nil
 }
 
-// RecordStreamUsage records usage after stream completes
+// RecordStreamUsage records usage after stream completes.
 func (s *router) RecordStreamUsage(usage *message.Usage, model string, providerURL string) {
 	if s.usageSvc == nil || usage == nil {
 		return
@@ -256,39 +238,27 @@ func resolveAlias(model string, body []byte, aliases map[string]string) (string,
 }
 
 func (s *router) ProviderStatuses() []ProviderStatus {
-	endpoints := endpoint.GlobalRegistry().GetAll()
-
-	providerMap := make(map[string]*ProviderStatus)
-	for _, ep := range endpoints {
-		prov := ep.Provider()
-		providerKey := prov.PrimaryBaseURL()
-		pStatus, ok := providerMap[providerKey]
-		if !ok {
-			pStatus = &ProviderStatus{
-				Name:     providerKey,
-				Protocol: ep.Protocol().String(),
+	grouped := s.routeRepo.RoutesByServiceEndpoint()
+	statuses := make([]ProviderStatus, 0, len(grouped))
+	for name, routes := range grouped {
+		proto := servicePrimaryProtocol(routes[0].SvcEP().Service()).String()
+		ps := ProviderStatus{Name: name, Protocol: proto}
+		for _, route := range routes {
+			available := route.IsAvailable()
+			ps.Models = append(ps.Models, ModelStatus{
+				Name:    string(route.Desc().Model),
+				Healthy: available,
+			})
+			if available && route.SvcEP().IsAvailable() {
+				ps.Healthy = true
 			}
-			providerMap[providerKey] = pStatus
 		}
-		modelHealthy := !ep.IsCircuitBreakerOpen()
-		pStatus.Models = append(pStatus.Models, ModelStatus{
-			Name:    ep.Model,
-			Healthy: modelHealthy,
-		})
-		if modelHealthy {
-			pStatus.Healthy = true
-		}
+		statuses = append(statuses, ps)
 	}
-
-	statuses := make([]ProviderStatus, 0, len(providerMap))
-	for _, status := range providerMap {
-		statuses = append(statuses, *status)
-	}
-
 	return statuses
 }
 
-// Stats returns usage statistics
+// Stats returns usage statistics.
 func (s *router) Stats(filter usage.QueryFilter) ([]usage.StatRow, error) {
 	if s.usageSvc == nil {
 		return nil, usage.ErrDisabled
@@ -308,46 +278,57 @@ func (s *router) Reload(cfg *config.Config) error {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	endpoint.GlobalRegistry().Clear()
-
-	userEndpoints := cfg.ToUserEndpoints()
-
-	s.mu.RLock()
-	retryMax := s.ctx.retryMax
-	s.mu.RUnlock()
-
-	// Pass HTTP config if timeout is set
-	var httpCfg *config.HTTPConfig
-	if cfg.HTTP.Timeout != "" {
-		httpCfg = &cfg.HTTP
-	}
-
-	openAIDoFuncs, anthropicDoFuncs, openAIStreamDoFuncs, anthropicStreamDoFuncs := buildDoFuncs(userEndpoints, retryMax, httpCfg)
+	newCtx := buildRouterCtx(cfg, s.svcEPs, s.routeRepo)
 
 	s.mu.Lock()
-	s.ctx = &routerCtx{
-		openAIDoFuncs:          openAIDoFuncs,
-		anthropicDoFuncs:       anthropicDoFuncs,
-		openAIStreamDoFuncs:    openAIStreamDoFuncs,
-		anthropicStreamDoFuncs: anthropicStreamDoFuncs,
-		aliases:                cfg.AliasMap(),
-		cfg:                    cfg,
-		retryMax:               retryMax,
-	}
+	s.ctx = newCtx
 	s.mu.Unlock()
 
-	s.healthLogger.Info("config reloaded", "models", len(openAIDoFuncs))
+	s.healthLogger.Info("config reloaded", "route_tables", len(newCtx.oaTables))
 	return nil
 }
 
 func rewriteModelInRequest(rawReq []byte, newModel string) []byte {
-	var partial struct {
-		Model json.RawMessage `json:"model"`
-	}
-	if err := json.Unmarshal(rawReq, &partial); err != nil || partial.Model == nil {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(rawReq, &m); err != nil {
 		return rawReq
 	}
-	// Replace only the model value bytes, leaving the rest of the body untouched.
-	newVal := []byte(`"` + newModel + `"`)
-	return bytes.Replace(rawReq, partial.Model, newVal, 1)
+	modelJSON, err := json.Marshal(newModel)
+	if err != nil {
+		return rawReq
+	}
+	m["model"] = modelJSON
+	result, err := json.Marshal(m)
+	if err != nil {
+		return rawReq
+	}
+	return result
+}
+
+func buildHTTPClient(cfg *config.HTTPConfig) *http.Client {
+	timeout, _ := time.ParseDuration(cfg.Timeout)
+	idleTimeout, _ := time.ParseDuration(cfg.IdleConnTimeout)
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	if idleTimeout == 0 {
+		idleTimeout = 90 * time.Second
+	}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			MaxIdleConns:        cfg.MaxIdleConns,
+			MaxIdleConnsPerHost: cfg.MaxIdleConnsPerHost,
+			IdleConnTimeout:     idleTimeout,
+		},
+	}
+}
+
+func servicePrimaryProtocol(svc fluxcore.Service) fluxcore.Protocol {
+	for _, p := range fluxcore.ProtocolPriority() {
+		if _, ok := svc.BaseURLs[p]; ok {
+			return p
+		}
+	}
+	return fluxcore.ProtocolOpenAI
 }

@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"os"
 	"testing"
+
+	"github.com/urfave/cli/v3"
 
 	"github.com/tokzone/tokrouter/config"
 )
@@ -87,25 +90,49 @@ func TestConfigKeyOperations(t *testing.T) {
 		t.Error("HasModel should return false for missing model")
 	}
 
-	// AddModel
-	if key.AddModel("gpt-4") {
-		t.Error("AddModel should return false when model already exists")
-	}
-	if !key.AddModel("gpt-3.5") {
-		t.Error("AddModel should return true when adding new model")
-	}
-	if len(key.Models) != 2 {
-		t.Errorf("Expected 2 models, got %d", len(key.Models))
-	}
-
 	// RemoveModel
 	if key.RemoveModel("nonexistent") {
 		t.Error("RemoveModel should return false for missing model")
 	}
-	if !key.RemoveModel("gpt-3.5") {
+	if !key.RemoveModel("gpt-4") {
 		t.Error("RemoveModel should return true when removing existing model")
 	}
-	if len(key.Models) != 1 {
-		t.Errorf("Expected 1 model after removal, got %d", len(key.Models))
+	if len(key.Models) != 0 {
+		t.Errorf("Expected 0 models after removal, got %d", len(key.Models))
+	}
+}
+
+func TestGetConfigPath(t *testing.T) {
+	// Default: no flag set, no env → returns hardcoded default
+	cmd := &cli.Command{
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "config"},
+		},
+	}
+	if got := getConfigPath(cmd); got != "./config.yaml" {
+		t.Errorf("default = %s, want ./config.yaml", got)
+	}
+
+	// From flag value
+	cmd2 := &cli.Command{
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "config", Value: "/custom/config.yaml"},
+		},
+	}
+	if got := getConfigPath(cmd2); got != "/custom/config.yaml" {
+		t.Errorf("from flag = %s, want /custom/config.yaml", got)
+	}
+
+	// From env var (checked when flag has no explicit value)
+	os.Setenv("TOKROUTER_CONFIG", "/tmp/test-config.yaml")
+	defer os.Unsetenv("TOKROUTER_CONFIG")
+
+	cmd3 := &cli.Command{
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "config"},
+		},
+	}
+	if got := getConfigPath(cmd3); got != "/tmp/test-config.yaml" {
+		t.Errorf("from env = %s, want /tmp/test-config.yaml", got)
 	}
 }

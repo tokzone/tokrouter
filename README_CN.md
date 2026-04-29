@@ -7,7 +7,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/tokflux/tokrouter/release.yml?style=flat-square)](https://github.com/tokflux/tokrouter/actions)
-[![Version](https://img.shields.io/badge/Version-v0.7.2-blue?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-v0.7.3-blue?style=flat-square)]()
 
 [English Documentation](README.md)
 
@@ -195,12 +195,14 @@ tr start
 │                                             │
 │              fluxcore (领域层)              │
 │                                             │
-│  flux/              Client + UserEndpoint   │
-│  endpoint/          全局注册中心            │
-│  provider/          提供商抽象              │
+│  Router             领域服务                │
+│  ServiceEndpoint    网络熔断聚合            │
+│  Route              模型熔断聚合            │
+│  RouteTable         预计算快照              │
+│  RouteRepository    熔断状态持久化          │
 │  message/           请求/响应中间表示       │
 │  errors/            错误分类                │
-│  translate/         Anthropic ↔ OpenAI      │
+│  translate/         协议转换                │
 │                                             │
 └─────────────────────────────────────────────┘
 
@@ -213,44 +215,42 @@ tr start
 
 ```go
 // router/router.go - 聚合服务
-type Service struct {
-    mu            sync.RWMutex
-    state         *serviceState  // 原子状态容器（重载时交换）
-    usageSvc      *usage.Service
-    healthLogger  *slog.Logger
+type routerCtx struct {
+    oaTables   map[fluxcore.Model]*fluxcore.RouteTable
+    anthTables map[fluxcore.Model]*fluxcore.RouteTable
+    retryMax   int
 }
 
-type serviceState struct {
-    clients   map[string]*flux.Client  // 模型 -> flux.Client
-    aliasMap  map[string]string         // 模型别名映射
-    cfg       *config.Config            // 当前配置
-    retryMax  int                       // 重试配置
+type router struct {
+    mu         sync.RWMutex
+    ctx        *routerCtx                     // atomic.Pointer 重载时交换
+    oaRouter   *fluxcore.Router
+    anthRouter *fluxcore.Router
+    svcEPs     map[string]*fluxcore.ServiceEndpoint
+    routeRepo  *fluxcore.RouteRepository      // 熔断状态跨重载保留
+    usageSvc   *usage.Service
 }
 
-func NewService(userEndpoints []*flux.UserEndpoint, usageSvc *usage.Service, retryMax int) *Service {
-    // 构建客户端 - 每个模型有独立的 flux.Client
-    clients := buildClients(userEndpoints, retryMax)
-    return &Service{
-        state:        &serviceState{clients: clients, aliasMap: make(map[string]string), retryMax: retryMax},
-        usageSvc:     usageSvc,
-        healthLogger: slog.Default().With("component", "router"),
+func (r *router) ForwardOpenAI(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error) {
+    r.mu.RLock()
+    table := r.ctx.oaTables[fluxcore.Model(model)]
+    retryMax := r.ctx.retryMax
+    r.mu.RUnlock()
+
+    if table == nil {
+        return nil, nil, errors.New("no route for model")
     }
-}
 
-func (s *Service) Forward(ctx context.Context, rawReq []byte, clientFormat provider.Protocol) ([]byte, *message.Usage, error) {
-    client, model, providerURL, req, err := s.prepareRequestWithDetails(rawReq)
-    s.healthLogger.Debug("forward starting", "model", model, "provider", providerURL)
-    resp, usage, err := client.Do(ctx, req, clientFormat)
+    route, resp, usage, err := r.oaRouter.Execute(ctx, table, body, retryMax)
     if err != nil {
-        s.healthLogger.Error("forward failed", "model", model, "provider", providerURL, "error", err.Error())
         return nil, nil, err
     }
-    s.usageSvc.RecordWithModelAndProvider(usage, model, providerURL, false)  // 记录成本（含提供商）
+    r.usageSvc.RecordWithModelAndProvider(usage, model, route.SvcEP().Service().Name, false)
     return resp, usage, nil
 }
 ```
 
-所有路由逻辑（端点选择、重试、降级）由 fluxcore 的 `flux.Client` 处理。
+所有路由逻辑（路由选择、重试、降级、健康反馈）由 fluxcore 的 `Router.Execute` 处理。
 
 ---
 
@@ -271,14 +271,20 @@ export OPENAI_API_BASE=http://127.0.0.1:8765/v1
 
 ## 熔断器
 
+fluxcore 双层熔断：
+
 ```
-模型状态机 (fluxcore):
+ServiceEndpoint 层（网络）：
+  DNS / 连接拒绝 / 超时 → 立即熔断（阈值=1）
+  恢复：120s
 
-健康 → 失败(1) → 失败(2) → 失败(3) → 不健康
-                                         ↓
-                                   60秒自动恢复
+Route 层（模型）：
+  429 限流 → 熔断（累计阈值=3）
+  500 服务错误 → 熔断（累计阈值=3）
+  恢复：60s
 
-tokrouter 自动切换到下一个健康模型。
+tokrouter 自动切换到下一个健康路由。
+熔断状态通过 RouteRepository 在配置重载（SIGHUP）后保留。
 ```
 
 ---
@@ -316,7 +322,7 @@ keys:
 
 ## 热重载
 
-无需重启即可重载配置：
+无需重启即可重载配置。熔断状态通过 `RouteRepository.FindOrCreate()` 跨重载保留。
 
 ```bash
 kill -SIGHUP $(pidof tokrouter)
@@ -547,7 +553,7 @@ aider --model gpt-4
 
 **Q: 自动降级如何工作？**
 
-模型失败 3 次 → 标记不健康 → 自动切换下一个健康模型。60 秒后重试不健康模型。
+双层保护：网络错误立即触发服务端点熔断（阈值=1，恢复=120s）。模型错误（429/5xx）累计 3 次触发路由熔断（恢复=60s），路由器自动切换到下一个健康路由。
 
 ---
 
@@ -573,7 +579,7 @@ tr start
 
 | 项目 | 说明 |
 |------|------|
-| **fluxcore** | LLM API 路由库（核心路由引擎） |
+| **fluxcore** | 基于 DDD 的 LLM 路由引擎（ServiceEndpoint, Route, RouteTable, Router） |
 
 ---
 

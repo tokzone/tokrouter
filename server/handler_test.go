@@ -2,26 +2,37 @@ package server
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/tokzone/fluxcore/endpoint"
-	"github.com/tokzone/fluxcore/flux"
-	"github.com/tokzone/fluxcore/provider"
+	fluxerrors "github.com/tokzone/fluxcore/errors"
 	"github.com/tokzone/tokrouter/config"
 	"github.com/tokzone/tokrouter/router"
 )
 
-func setupTestRouter() router.Router {
-	endpoint.GlobalRegistry().Clear()
-	prov := provider.NewProvider(1, provider.SingleBaseURL("https://api.example.com"))
-	endpoint.RegisterEndpoint(1, prov, "gpt-4", []provider.Protocol{provider.ProtocolOpenAI})
-	k, _ := flux.NewAPIKey(prov, "test-key")
-	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
-	return router.New([]*flux.UserEndpoint{ue}, nil, 2, nil, nil, nil)
+func setupTestRouter(t *testing.T) router.Router {
+	t.Helper()
+	cfg := &config.Config{
+		Server: config.ServerConfig{Host: "127.0.0.1", Port: 8765},
+		Keys: []config.KeyConfig{
+			{
+				Name: "test", Format: "openai", Secret: "sk-test",
+				BaseURLs: map[string]string{"openai": "https://api.example.com"},
+				Enabled: true,
+				Models:  []config.ModelConfig{{Name: "gpt-4", Priority: 0}},
+			},
+		},
+		Router: config.RouterConfig{Retry: config.RetryConfig{MaxRetries: 2}},
+		Log:    config.LogConfig{Level: "info", Format: "json", Output: "stdout"},
+	}
+	svc, err := router.New(cfg, nil)
+	if err != nil {
+		t.Fatalf("setupTestRouter: %v", err)
+	}
+	t.Cleanup(func() { svc.Close() })
+	return svc
 }
 
 func TestHandleHealth(t *testing.T) {
@@ -46,8 +57,7 @@ func TestHandleHealth(t *testing.T) {
 }
 
 func TestHandleHealthWithRouter(t *testing.T) {
-	svc := setupTestRouter()
-	defer svc.Close()
+	svc := setupTestRouter(t)
 
 	handler := HandleHealth(svc)
 	req := httptest.NewRequest("GET", "/health", nil)
@@ -70,25 +80,22 @@ func TestHandleHealthWithRouter(t *testing.T) {
 }
 
 func TestHandleHealthDegraded(t *testing.T) {
-	endpoint.GlobalRegistry().Clear()
-	prov := provider.NewProvider(1, provider.SingleBaseURL("https://api.example.com"))
-	ep := endpoint.RegisterEndpoint(1, prov, "gpt-4", []provider.Protocol{provider.ProtocolOpenAI})
-	ep.MarkEndpointFail()
-	ep.MarkEndpointFail()
-	ep.MarkEndpointFail()
+	// Use MockRouter to simulate degraded state
+	mock := &router.MockRouter{
+		ProviderStatusesFunc: func() []router.ProviderStatus {
+			return []router.ProviderStatus{
+				{Name: "test-provider", Protocol: "openai", Healthy: false,
+					Models: []router.ModelStatus{{Name: "gpt-4", Healthy: false}}},
+			}
+		},
+	}
 
-	k, _ := flux.NewAPIKey(prov, "test-key")
-	ue, _ := flux.NewUserEndpoint("gpt-4", k, 0)
-	svc := router.New([]*flux.UserEndpoint{ue}, nil, 2, nil, nil, nil)
-	defer svc.Close()
-
-	handler := HandleHealth(svc)
+	handler := HandleHealth(mock)
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 
 	handler(w, req)
 
-	// Should return degraded status
 	var resp map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
@@ -102,8 +109,7 @@ func TestHandleHealthDegraded(t *testing.T) {
 }
 
 func TestHandleOpenAIInvalidJSON(t *testing.T) {
-	svc := setupTestRouter()
-	defer svc.Close()
+	svc := setupTestRouter(t)
 
 	handler := HandleOpenAI(svc)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("invalid json"))
@@ -117,8 +123,7 @@ func TestHandleOpenAIInvalidJSON(t *testing.T) {
 }
 
 func TestHandleOpenAIMissingModel(t *testing.T) {
-	svc := setupTestRouter()
-	defer svc.Close()
+	svc := setupTestRouter(t)
 
 	handler := HandleOpenAI(svc)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"messages": []}`))
@@ -126,7 +131,6 @@ func TestHandleOpenAIMissingModel(t *testing.T) {
 
 	handler(w, req)
 
-	// Should attempt to route (will fail with unknown model error)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("Status code = %d, want 503", w.Code)
 	}
@@ -179,7 +183,7 @@ func TestWithTraceIDFromRequest(t *testing.T) {
 
 func TestWriteErrorResponse(t *testing.T) {
 	w := httptest.NewRecorder()
-	errResp := NewErrorResponse(errors.New("test error"))
+	errResp := NewErrorResponseWithCode(fluxerrors.CodeServerError, "test error")
 
 	WriteErrorResponse(w, http.StatusInternalServerError, errResp)
 
@@ -205,8 +209,7 @@ func TestHandleStatus(t *testing.T) {
 }
 
 func TestHandleStatusWithRouter(t *testing.T) {
-	svc := setupTestRouter()
-	defer svc.Close()
+	svc := setupTestRouter(t)
 
 	handler := HandleStatus(svc)
 	req := httptest.NewRequest("GET", "/status", nil)
@@ -230,7 +233,7 @@ func TestHandleStatusWithRouter(t *testing.T) {
 
 func TestWriteErrorResponseWithCode(t *testing.T) {
 	w := httptest.NewRecorder()
-	errResp := NewErrorResponseWithCode("INVALID_REQUEST", "test message")
+	errResp := NewErrorResponseWithCode(fluxerrors.CodeInvalidRequest, "test message")
 
 	WriteErrorResponse(w, http.StatusBadRequest, errResp)
 
@@ -247,14 +250,13 @@ func TestWriteErrorResponseWithCode(t *testing.T) {
 		t.Errorf("type = %v, want error", resp["type"])
 	}
 
-	if resp["code"] != "INVALID_REQUEST" {
-		t.Errorf("code = %v, want INVALID_REQUEST", resp["code"])
+	if resp["code"] != "invalid_request" {
+		t.Errorf("code = %v, want invalid_request", resp["code"])
 	}
 }
 
 func TestNewServer(t *testing.T) {
-	svc := setupTestRouter()
-	defer svc.Close()
+	svc := setupTestRouter(t)
 
 	traceCfg := config.TraceConfig{Enabled: true, Header: "x-request-id"}
 	srv := NewServer(svc, traceCfg, "config.yaml")
@@ -267,12 +269,48 @@ func TestNewServer(t *testing.T) {
 	}
 }
 
+func TestHandleOpenAIStream(t *testing.T) {
+	mock := &router.MockRouter{}
+
+	handler := HandleOpenAI(mock)
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	w := httptest.NewRecorder()
+
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status code = %d, want 200", w.Code)
+	}
+	if w.Header().Get("Content-Type") != "text/event-stream" {
+		t.Errorf("Content-Type = %s, want text/event-stream", w.Header().Get("Content-Type"))
+	}
+}
+
+func TestHandleAnthropicStream(t *testing.T) {
+	mock := &router.MockRouter{}
+
+	handler := HandleAnthropic(mock)
+	req := httptest.NewRequest("POST", "/v1/messages",
+		strings.NewReader(`{"model":"claude-3","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	w := httptest.NewRecorder()
+
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status code = %d, want 200", w.Code)
+	}
+	if w.Header().Get("Content-Type") != "text/event-stream" {
+		t.Errorf("Content-Type = %s, want text/event-stream", w.Header().Get("Content-Type"))
+	}
+}
+
+
 func TestGenerateTraceID(t *testing.T) {
 	id := generateTraceID()
 	if id == "" {
 		t.Error("generateTraceID returned empty string")
 	}
-	// Should contain pid and timestamp separated by dash
 	if !strings.Contains(id, "-") {
 		t.Errorf("traceID format = %s, expected format pid-timestamp", id)
 	}

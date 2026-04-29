@@ -57,37 +57,6 @@ func (s *Service) enqueue(record *Record) bool {
 	}
 }
 
-// Record records usage (non-blocking)
-func (s *Service) Record(usage *message.Usage, isStream bool) bool {
-	if s.store == nil || usage == nil {
-		return false
-	}
-	return s.enqueue(&Record{
-		Timestamp:    time.Now(),
-		InputTokens:  int64(usage.InputTokens),
-		OutputTokens: int64(usage.OutputTokens),
-		Success:      usage.InputTokens > 0 || usage.OutputTokens > 0,
-		Stream:       isStream,
-		LatencyMS:    uint16(usage.LatencyMs),
-	})
-}
-
-// RecordWithModel records usage with model info (non-blocking)
-func (s *Service) RecordWithModel(usage *message.Usage, model string, isStream bool) bool {
-	if s.store == nil || usage == nil {
-		return false
-	}
-	return s.enqueue(&Record{
-		Timestamp:    time.Now(),
-		Model:        model,
-		InputTokens:  int64(usage.InputTokens),
-		OutputTokens: int64(usage.OutputTokens),
-		Success:      usage.InputTokens > 0 || usage.OutputTokens > 0,
-		Stream:       isStream,
-		LatencyMS:    uint16(usage.LatencyMs),
-	})
-}
-
 // RecordWithModelAndProvider records usage with model and provider info (non-blocking)
 func (s *Service) RecordWithModelAndProvider(usage *message.Usage, model string, provider string, isStream bool) bool {
 	if s.store == nil || usage == nil {

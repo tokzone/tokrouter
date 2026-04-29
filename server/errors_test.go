@@ -2,72 +2,54 @@ package server
 
 import (
 	"testing"
-)
 
-func TestNewErrorResponse(t *testing.T) {
-	err := NewErrorResponse(nil)
-	if err == nil {
-		t.Fatal("NewErrorResponse returned nil")
-	}
-	if err.Type != "error" {
-		t.Errorf("Type = %s, want error", err.Type)
-	}
-	if err.Code != ErrCodeInternalError {
-		t.Errorf("Code = %s, want %s", err.Code, ErrCodeInternalError)
-	}
-}
+	"github.com/tokzone/fluxcore/errors"
+)
 
 func TestNewErrorResponseWithCode(t *testing.T) {
 	tests := []struct {
 		name     string
-		code     string
+		code     errors.ErrorCode
 		details  string
 		wantCode string
 		wantMsg  bool
 	}{
 		{
 			name:     "invalid request",
-			code:     ErrCodeInvalidRequest,
+			code:     errors.CodeInvalidRequest,
 			details:  "missing model field",
-			wantCode: ErrCodeInvalidRequest,
+			wantCode: string(errors.CodeInvalidRequest),
 			wantMsg:  true,
 		},
 		{
-			name:     "upstream failed",
-			code:     ErrCodeUpstreamFailed,
+			name:     "server error",
+			code:     errors.CodeServerError,
 			details:  "connection timeout",
-			wantCode: ErrCodeUpstreamFailed,
+			wantCode: string(errors.CodeServerError),
 			wantMsg:  true,
 		},
 		{
-			name:     "internal error",
-			code:     ErrCodeInternalError,
+			name:     "no endpoint",
+			code:     errors.CodeNoEndpoint,
 			details:  "",
-			wantCode: ErrCodeInternalError,
-			wantMsg:  true,
-		},
-		{
-			name:     "unknown code defaults to internal",
-			code:     "UNKNOWN_CODE",
-			details:  "",
-			wantCode: ErrCodeInternalError,
+			wantCode: string(errors.CodeNoEndpoint),
 			wantMsg:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewErrorResponseWithCode(tt.code, tt.details)
-			if err == nil {
+			errResp := NewErrorResponseWithCode(tt.code, tt.details)
+			if errResp == nil {
 				t.Fatal("NewErrorResponseWithCode returned nil")
 			}
-			if err.Code != tt.wantCode {
-				t.Errorf("Code = %s, want %s", err.Code, tt.wantCode)
+			if errResp.Code != tt.wantCode {
+				t.Errorf("Code = %s, want %s", errResp.Code, tt.wantCode)
 			}
-			if tt.wantMsg && err.Message == "" {
+			if tt.wantMsg && errResp.Message == "" {
 				t.Error("Message should not be empty")
 			}
-			if err.Suggestion == "" {
+			if errResp.Suggestion == "" {
 				t.Error("Suggestion should not be empty")
 			}
 		})
@@ -84,10 +66,10 @@ func TestErrorResponseError(t *testing.T) {
 			name: "with code",
 			err: &ErrorResponse{
 				Type:    "error",
-				Code:    ErrCodeInvalidRequest,
+				Code:    string(errors.CodeInvalidRequest),
 				Message: "test message",
 			},
-			wantStr: "[INVALID_REQUEST] test message",
+			wantStr: "[invalid_request] test message",
 		},
 		{
 			name: "without code",

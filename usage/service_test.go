@@ -84,7 +84,7 @@ func TestRecord(t *testing.T) {
 		IsAccurate:   true,
 	}
 
-	if !svc.Record(usage, false) {
+	if !svc.RecordWithModelAndProvider(usage, "gpt-4", "", false) {
 		t.Error("expected record to be queued")
 	}
 
@@ -110,7 +110,7 @@ func TestRecordWithModel(t *testing.T) {
 		IsAccurate:   true,
 	}
 
-	if !svc.RecordWithModel(usage, "gpt-4", false) {
+	if !svc.RecordWithModelAndProvider(usage, "gpt-4", "openai", false) {
 		t.Error("expected record to be queued")
 	}
 
@@ -156,8 +156,8 @@ func TestRecordNilInputs(t *testing.T) {
 	defer svc.Close()
 
 	// nil usage
-	svc.Record(nil, false)
-	svc.RecordWithModel(nil, "gpt-4", false)
+	svc.RecordWithModelAndProvider(nil, "", "", false)
+	svc.RecordWithModelAndProvider(nil, "gpt-4", "", false)
 	svc.RecordWithModelAndProvider(nil, "gpt-4", "https://api.openai.com", false)
 
 	// Give a brief moment for any potential async processing
@@ -226,7 +226,7 @@ func TestRecordBufferFull(t *testing.T) {
 	// Fill buffer beyond capacity (worker is blocked, so buffer will fill)
 	dropped := 0
 	for i := 0; i < recordBufferSize+100; i++ {
-		if !svc.Record(usage, false) {
+		if !svc.RecordWithModelAndProvider(usage, "", "", false) {
 			dropped++
 		}
 	}

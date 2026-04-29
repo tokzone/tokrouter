@@ -6,9 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strings"
 
 	"github.com/pterm/pterm"
+
+	"github.com/tokzone/tokrouter/config"
 )
 
 // AssistantConfig defines an AI assistant configuration template
@@ -16,11 +20,13 @@ type AssistantConfig struct {
 	Name         string
 	DisplayName  string
 	ConfigType   string // "env", "json", "yaml"
-	CheckCommand string // 命令检测（空则用配置目录检测）
+	CheckCommand string // command to detect installation (empty = use config dirs)
 	ConfigPaths  []string
 	EnvVars      []EnvVarConfig
 	JSONConfig   map[string]interface{}
 	JSONKeyPath  string // dot-separated path for JSON merge
+	TOMLConfig   map[string]string // TOML key-value pairs (for "toml" ConfigType)
+	ModelNote    string // hint shown after config, for assistants where we can't set the model programmatically
 }
 
 // EnvVarConfig defines an environment variable
@@ -40,23 +46,18 @@ func findAssistant(name string) *AssistantConfig {
 }
 
 // checkAssistantInstalled checks if an assistant is installed
-// Priority: 1) CheckCommand (if set) 2) ConfigPaths (directory existence)
 func checkAssistantInstalled(a *AssistantConfig) bool {
-	// 优先检测命令是否存在
 	if a.CheckCommand != "" {
 		_, err := exec.LookPath(a.CheckCommand)
 		if err == nil {
 			return true
 		}
 	}
-
-	// 如果没有命令检测，则检测配置目录是否存在
 	for _, path := range a.ConfigPaths {
 		expanded := expandPath(path)
 		if _, err := os.Stat(expanded); err == nil {
 			return true
 		}
-		// 检测目录是否存在（针对 ~/.cursor/ 这类目录）
 		dir := filepath.Dir(expanded)
 		if _, err := os.Stat(dir); err == nil {
 			return true
@@ -67,7 +68,6 @@ func checkAssistantInstalled(a *AssistantConfig) bool {
 
 // getAssistantConfigPath returns the config file path for an assistant
 func getAssistantConfigPath(a *AssistantConfig) string {
-	// Return first existing path or first default path
 	for _, path := range a.ConfigPaths {
 		expanded := expandPath(path)
 		if _, err := os.Stat(expanded); err == nil {
@@ -77,14 +77,27 @@ func getAssistantConfigPath(a *AssistantConfig) string {
 	return expandPath(a.ConfigPaths[0])
 }
 
+// getShellProfilePath returns the first existing shell profile path.
+func getShellProfilePath() string {
+	paths := getShellProfilePaths()
+	for _, p := range paths {
+		expanded := expandPath(p)
+		if _, err := os.Stat(expanded); err == nil {
+			return expanded
+		}
+	}
+	if len(paths) > 0 {
+		return expandPath(paths[0])
+	}
+	return ""
+}
+
 // expandPath expands ~ and environment variables in a path
 func expandPath(path string) string {
-	// Expand ~ first
 	if len(path) > 0 && path[0] == '~' {
 		home, _ := os.UserHomeDir()
 		path = home + path[1:]
 	}
-	// Expand environment variables (basic support for ${VAR})
 	if runtime.GOOS == "windows" {
 		if path == "${PROFILE}" {
 			profile := os.Getenv("USERPROFILE")
@@ -98,11 +111,11 @@ func expandPath(path string) string {
 }
 
 // generateAssistantConfig generates config content for display
-func generateAssistantConfig(a *AssistantConfig, url string) string {
+func generateAssistantConfig(a *AssistantConfig, url, model string) string {
 	if a.ConfigType == "env" {
 		result := ""
 		for _, env := range a.EnvVars {
-			value := replaceURL(env.Value, url)
+			value := resolveTemplate(env.Value, url, model)
 			if runtime.GOOS == "windows" {
 				result += fmt.Sprintf("$env:%s = \"%s\"\n", env.Name, value)
 			} else {
@@ -113,66 +126,145 @@ func generateAssistantConfig(a *AssistantConfig, url string) string {
 	}
 	if a.ConfigType == "json" {
 		config := deepCopyMap(a.JSONConfig)
-		replaceURLInMap(config, url)
+		resolveTemplateInMap(config, url, model)
 		data, _ := json.MarshalIndent(config, "", "  ")
 		return string(data)
+	}
+	if a.ConfigType == "toml" {
+		result := ""
+		for k, v := range a.TOMLConfig {
+			val := resolveTemplate(v, url, model)
+			if val == "" {
+				continue
+			}
+			result += fmt.Sprintf("%s = %s\n", k, tomlLiteral(val))
+		}
+		if len(a.EnvVars) > 0 {
+			result += "\n# Also set in shell profile:\n"
+			for _, env := range a.EnvVars {
+				val := resolveTemplate(env.Value, url, model)
+				if runtime.GOOS == "windows" {
+					result += fmt.Sprintf("$env:%s = \"%s\"\n", env.Name, val)
+				} else {
+					result += fmt.Sprintf("export %s=\"%s\"\n", env.Name, val)
+				}
+			}
+		}
+		return result
 	}
 	return ""
 }
 
 // writeAssistantConfig writes config for an assistant
-func writeAssistantConfig(a *AssistantConfig, url string) error {
+func writeAssistantConfig(a *AssistantConfig, url, model string) error {
 	configPath := getAssistantConfigPath(a)
 
 	if a.ConfigType == "env" {
-		return writeEnvConfig(configPath, a, url)
+		return writeEnvConfig(configPath, a, url, model)
 	}
 	if a.ConfigType == "json" {
-		return writeJSONConfig(configPath, a, url)
+		return writeJSONConfig(configPath, a, url, model)
+	}
+	if a.ConfigType == "toml" {
+		if err := writeTOMLConfig(configPath, a, url, model); err != nil {
+			return err
+		}
+		// Also write env vars to shell profile if present
+		if len(a.EnvVars) > 0 {
+			shellPath := getShellProfilePath()
+			if shellPath != "" {
+				shellA := &AssistantConfig{
+					Name:       a.Name,
+					ConfigType: "env",
+					EnvVars:    a.EnvVars,
+				}
+				return writeEnvConfig(shellPath, shellA, url, model)
+			}
+		}
+		return nil
 	}
 	return fmt.Errorf("unsupported config type: %s", a.ConfigType)
 }
 
-// writeEnvConfig writes environment variable config to shell profile
-func writeEnvConfig(path string, a *AssistantConfig, url string) error {
-	// Read existing content
+// writeEnvConfig writes environment variable config to shell profile.
+// Existing assignments are replaced in place; new vars are appended.
+func writeEnvConfig(path string, a *AssistantConfig, url, model string) error {
 	existing, _ := os.ReadFile(path)
 	content := string(existing)
 
-	// Check if already configured
+	var toAppend []string
 	for _, env := range a.EnvVars {
+		value := resolveTemplate(env.Value, url, model)
+		var pattern *regexp.Regexp
+		var newLine string
 		if runtime.GOOS == "windows" {
-			if contains(content, "$env:"+env.Name) {
-				pterm.Info.Printf("  %s already configured in %s\n", env.Name, path)
-				continue
-			}
+			pattern = regexp.MustCompile(`(?m)^\$env:` + regexp.QuoteMeta(env.Name) + `\s*=\s*".*"$`)
+			newLine = fmt.Sprintf(`$env:%s = "%s"`, env.Name, value)
 		} else {
-			if contains(content, "export "+env.Name) {
-				pterm.Info.Printf("  %s already configured in %s\n", env.Name, path)
-				continue
-			}
+			pattern = regexp.MustCompile(`(?m)^export ` + regexp.QuoteMeta(env.Name) + `=.*$`)
+			newLine = fmt.Sprintf(`export %s="%s"`, env.Name, value)
+		}
+		if pattern.MatchString(content) {
+			content = pattern.ReplaceAllString(content, newLine)
+			pterm.Info.Printf("  Updated %s in %s\n", env.Name, path)
+		} else {
+			toAppend = append(toAppend, newLine)
 		}
 	}
 
-	// Add new exports
-	lines := "\n# Added by tokrouter\n"
-	for _, env := range a.EnvVars {
-		value := replaceURL(env.Value, url)
-		if runtime.GOOS == "windows" {
-			lines += fmt.Sprintf("$env:%s = \"%s\"\n", env.Name, value)
-		} else {
-			lines += fmt.Sprintf("export %s=\"%s\"\n", env.Name, value)
+	if len(toAppend) > 0 {
+		if !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		content += "\n# Added by tokrouter\n"
+		for _, line := range toAppend {
+			content += line + "\n"
 		}
 	}
 
-	// Append to file
-	newContent := content + lines
-	return os.WriteFile(path, []byte(newContent), 0644)
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+// writeTOMLConfig writes TOML config file.
+// Existing keys are replaced in place; new keys are appended.
+func writeTOMLConfig(path string, a *AssistantConfig, url, model string) error {
+	existing, _ := os.ReadFile(path)
+	content := string(existing)
+
+	var toAppend []string
+	for k, v := range a.TOMLConfig {
+		value := resolveTemplate(v, url, model)
+		if value == "" {
+			continue
+		}
+		newLine := fmt.Sprintf("%s = %s", k, tomlLiteral(value))
+		pattern := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(k) + `\s*=\s*.*$`)
+		if pattern.MatchString(content) {
+			content = pattern.ReplaceAllString(content, newLine)
+			pterm.Info.Printf("  Updated %s in %s\n", k, path)
+		} else {
+			toAppend = append(toAppend, newLine)
+		}
+	}
+
+	if len(toAppend) > 0 {
+		if !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		content += "\n# Added by tokrouter\n"
+		for _, line := range toAppend {
+			content += line + "\n"
+		}
+	}
+
+	dir := filepath.Dir(path)
+	os.MkdirAll(dir, 0755)
+
+	return os.WriteFile(path, []byte(content), 0644)
 }
 
 // writeJSONConfig writes JSON config with merge
-func writeJSONConfig(path string, a *AssistantConfig, url string) error {
-	// Check if file exists
+func writeJSONConfig(path string, a *AssistantConfig, url, model string) error {
 	var existing map[string]interface{}
 	data, err := os.ReadFile(path)
 	if err == nil {
@@ -181,17 +273,13 @@ func writeJSONConfig(path string, a *AssistantConfig, url string) error {
 		existing = map[string]interface{}{}
 	}
 
-	// Deep copy template and replace URL
 	newConfig := deepCopyMap(a.JSONConfig)
-	replaceURLInMap(newConfig, url)
+	resolveTemplateInMap(newConfig, url, model)
 
-	// Merge
 	merged := mergeMaps(existing, newConfig)
 
-	// Write back
 	result, _ := json.MarshalIndent(merged, "", "  ")
 
-	// Ensure directory exists
 	dir := filepath.Dir(path)
 	os.MkdirAll(dir, 0755)
 
@@ -219,30 +307,61 @@ func getAssistantRestartHint(a *AssistantConfig) string {
 		return "Restart VS Code"
 	case "continue":
 		return "Restart Continue.dev extension"
+	case "codex":
+		if runtime.GOOS == "windows" {
+			return "Restart PowerShell or run: $env:OPENAI_API_KEY = ..."
+		}
+		return "Run: source ~/.zshrc (or ~/.bashrc) for API key"
 	default:
 		return "Restart the assistant"
 	}
 }
 
-// Helper functions (pure logic, no config data)
-
-func replaceURL(value, url string) string {
-	if value == "{{URL}}" {
-		return url
-	}
-	if value == "{{URL}}/v1" {
-		return url + "/v1"
+// resolveTemplate replaces {{URL}}, {{MODEL}}, {{CONTEXT}} placeholders in a value.
+func resolveTemplate(value, url, model string) string {
+	value = strings.ReplaceAll(value, "{{URL}}", url)
+	value = strings.ReplaceAll(value, "{{MODEL}}", model)
+	if strings.Contains(value, "{{CONTEXT}}") {
+		value = strings.ReplaceAll(value, "{{CONTEXT}}", lookupModelContext(model))
 	}
 	return value
 }
 
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+// lookupModelContext finds the context window size for a model from built-in presets.
+func lookupModelContext(model string) string {
+	for _, preset := range getPresetsFromConfig() {
+		for _, m := range preset.DefaultModels {
+			if m.Name == model && m.Context > 0 {
+				return fmt.Sprintf("%d", m.Context)
+			}
 		}
 	}
-	return false
+	return ""
+}
+
+// getPresetsFromConfig returns all available presets.
+func getPresetsFromConfig() []config.ProviderPreset {
+	return config.ListPresets()
+}
+
+// tomlLiteral formats a value for TOML: bare for integers, quoted for strings.
+func tomlLiteral(v string) string {
+	if isNumeric(v) {
+		return v
+	}
+	return `"` + v + `"`
+}
+
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func deepCopyMap(m map[string]interface{}) map[string]interface{} {
@@ -257,12 +376,12 @@ func deepCopyMap(m map[string]interface{}) map[string]interface{} {
 	return result
 }
 
-func replaceURLInMap(m map[string]interface{}, url string) {
+func resolveTemplateInMap(m map[string]interface{}, url, model string) {
 	for k, v := range m {
 		if sub, ok := v.(map[string]interface{}); ok {
-			replaceURLInMap(sub, url)
+			resolveTemplateInMap(sub, url, model)
 		} else if str, ok := v.(string); ok {
-			m[k] = replaceURL(str, url)
+			m[k] = resolveTemplate(str, url, model)
 		}
 	}
 }
@@ -281,11 +400,4 @@ func mergeMaps(existing, new map[string]interface{}) map[string]interface{} {
 		}
 	}
 	return result
-}
-
-// checkServerStatus checks if tokrouter server is running
-// Returns "running" or "not running"
-func checkServerStatus(url string) string {
-	// TODO: Implement actual HTTP check
-	return "not running"
 }

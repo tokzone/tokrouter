@@ -12,17 +12,11 @@ presets:
     region: global
     doc_url: https://platform.openai.com/api-keys
     models:
-      - {name: gpt-4o, alias: "4o", context: 128000}
-      - {name: gpt-4o-mini, alias: "4o-mini", context: 128000}
-      - {name: gpt-4.1, alias: "4.1", context: 1048576}
-      - {name: gpt-4.1-mini, alias: "4.1-mini", context: 1048576}
-      - {name: gpt-4.1-nano, alias: "4.1-nano", context: 1048576}
-      - {name: gpt-4-turbo, alias: "4t", context: 128000}
-      - {name: gpt-4, context: 8192}
-      - {name: gpt-4o-audio, alias: "4o-audio", context: 128000}
-      - {name: o1, context: 200000}
-      - {name: o3, context: 200000}
-      - {name: o3-mini, alias: "o3-mini", context: 200000}
+      - {name: gpt-5.4, alias: "5.4", context: 1050000}
+      - {name: gpt-5.4-mini, alias: "5.4-mini", context: 400000}
+      - {name: gpt-5.4-nano, alias: "5.4-nano", context: 400000}
+      - {name: gpt-5.3-instant, alias: "5.3-instant", context: 128000}
+      - {name: gpt-5.3-codex, alias: "5.3-codex", context: 128000}
       - {name: o4-mini, alias: "o4-mini", context: 200000}
 
   anthropic:
@@ -33,13 +27,11 @@ presets:
     region: global
     doc_url: https://console.anthropic.com/settings/keys
     models:
-      - {name: claude-sonnet-4-5-20250929, alias: "claude-sonnet-4-5", context: 200000}
-      - {name: claude-opus-4-5-20251101, alias: "claude-opus-4-5", context: 200000}
-      - {name: claude-haiku-4-5-20251001, alias: "claude-haiku-4-5", context: 200000}
-      - {name: claude-opus-4-20250514, alias: "claude-opus-4", context: 200000}
-      - {name: claude-sonnet-4-20250514, alias: "claude-sonnet-4", context: 200000}
-      - {name: claude-3-5-sonnet-20241022, alias: "claude-3.5-sonnet", context: 200000}
-      - {name: claude-3-5-haiku-20241022, alias: "claude-3.5-haiku", context: 200000}
+      - {name: claude-opus-4-7-20260416, alias: "opus-4.7", context: 1000000}
+      - {name: claude-sonnet-4-6-20260217, alias: "sonnet-4.6", context: 1000000}
+      - {name: claude-haiku-4-5-20251001, alias: "haiku-4.5", context: 200000}
+      - {name: claude-opus-4-6-20260214, alias: "opus-4.6", context: 1000000}
+      - {name: claude-sonnet-4-5-20250929, alias: "sonnet-4.5", context: 200000}
 
   google:
     display_name: Google Gemini
@@ -51,10 +43,8 @@ presets:
     models:
       - {name: gemini-2.5-pro, alias: "gemini-2.5-pro", context: 1048576}
       - {name: gemini-2.5-flash, alias: "gemini-2.5-flash", context: 1048576}
+      - {name: gemini-2.5-flash-lite, alias: "gemini-2.5-flash-lite", context: 1048576}
       - {name: gemini-2.0-flash, alias: "gemini-2-flash", context: 1048576}
-      - {name: gemini-2.0-flash-lite, alias: "gemini-2-flash-lite", context: 1048576}
-      - {name: gemini-1.5-pro, alias: "gemini-1.5-pro", context: 2097152}
-      - {name: gemini-1.5-flash, alias: "gemini-1.5-flash", context: 1048576}
 
   mistral:
     display_name: Mistral AI
@@ -64,12 +54,12 @@ presets:
     region: global
     doc_url: https://console.mistral.ai/api-keys/
     models:
-      - {name: mistral-large-latest, alias: "mistral-large", context: 128000}
-      - {name: mistral-medium-latest, alias: "mistral-medium", context: 128000}
-      - {name: mistral-small-latest, alias: "mistral-small", context: 128000}
+      - {name: mistral-small-2603, alias: "mistral-small-4", context: 256000}
+      - {name: mistral-large-3, alias: "mistral-large-3", context: 256000}
+      - {name: ministral-14b, alias: "ministral-14b", context: 256000}
+      - {name: ministral-8b, alias: "ministral-8b", context: 256000}
+      - {name: ministral-3b, alias: "ministral-3b", context: 256000}
       - {name: codestral-latest, alias: "codestral", context: 64000}
-      - {name: ministral-8b-latest, alias: "ministral-8b", context: 128000}
-      - {name: ministral-3b-latest, alias: "ministral-3b", context: 128000}
 
   cohere:
     display_name: Cohere
@@ -79,10 +69,11 @@ presets:
     region: global
     doc_url: https://dashboard.cohere.com/api-keys
     models:
-      - {name: command-r-plus, alias: "r-plus", context: 128000}
-      - {name: command-r, alias: "r", context: 128000}
-      - {name: command-r7b, alias: "r7b", context: 128000}
-      - {name: command-a, alias: "a", context: 128000}
+      - {name: command-a-03-2025, alias: "command-a", context: 256000}
+      - {name: command-a-reasoning-08-2025, alias: "command-a-reasoning", context: 256000}
+      - {name: command-a-vision-07-2025, alias: "command-a-vision", context: 128000}
+      - {name: command-r7b-12-2024, alias: "command-r7b", context: 128000}
+      - {name: command-r-08-2024, alias: "command-r", context: 128000}
 
   groq:
     display_name: Groq
@@ -92,28 +83,31 @@ presets:
     region: global
     doc_url: https://console.groq.com/keys
     models:
-      - {name: llama-4-scout-17b-16e-instruct, alias: "llama-4-scout", context: 128000}
+      - {name: meta-llama/llama-4-scout-17b-16e-instruct, alias: "llama-4-scout", context: 128000}
+      - {name: meta-llama/llama-4-maverick-17b-128e-instruct, alias: "llama-4-maverick", context: 128000}
       - {name: llama-3.3-70b-versatile, alias: "llama-70b", context: 128000}
-      - {name: qwen-3-235b-a22b, alias: "qwen-3", context: 128000}
-      - {name: deepseek-r1-distill-llama-70b, alias: "deepseek-r1-70b", context: 128000}
-      - {name: mixtral-8x7b-32768, alias: "mixtral", context: 32768}
+      - {name: openai/gpt-oss-120b, alias: "gpt-oss-120b", context: 128000}
+      - {name: qwen/qwen3-32b, alias: "qwen3-32b", context: 128000}
+      - {name: moonshotai/kimi-k2-instruct-0905, alias: "kimi-k2", context: 128000}
 
   deepseek:
     display_name: DeepSeek
     base_urls:
       openai: https://api.deepseek.com
-      anthropic: https://api.deepseek.com
+      anthropic: https://api.deepseek.com/anthropic
     format: openai
     protocols: [openai, anthropic]
     region: china
     doc_url: https://platform.deepseek.com/api-keys
     models:
+      - {name: deepseek-v4-pro, alias: "v4-pro", context: 1048576}
+      - {name: deepseek-v4-flash, alias: "v4-flash", context: 1048576}
       - {name: deepseek-chat, alias: "chat", context: 131072}
       - {name: deepseek-reasoner, alias: "r1", context: 65536}
 
   # ===== Chinese Providers =====
   zhipu:
-    display_name: 智谱 AI
+    display_name: Zhipu AI
     base_urls:
       openai: https://open.bigmodel.cn/api/paas/v4
       anthropic: https://open.bigmodel.cn/api/anthropic
@@ -122,14 +116,15 @@ presets:
     region: china
     doc_url: https://open.bigmodel.cn/api-keys
     models:
-      - {name: glm-4-plus, alias: "glm-plus", context: 128000}
-      - {name: glm-4-air, alias: "glm-air", context: 128000}
-      - {name: glm-4-airx, alias: "glm-airx", context: 128000}
-      - {name: glm-4-flash, alias: "glm-flash", context: 128000}
-      - {name: glm-4-long, alias: "glm-long", context: 1048576}
+      - {name: GLM-5.1, alias: "glm-5.1", context: 200000}
+      - {name: GLM-5, alias: "glm-5", context: 200000}
+      - {name: GLM-4.7, alias: "glm-4.7", context: 205000}
+      - {name: GLM-4.7-Flash, alias: "glm-4.7-flash", context: 128000}
+      - {name: GLM-4.6, alias: "glm-4.6", context: 131000}
+      - {name: GLM-5V-Turbo, alias: "glm-5v-turbo", context: 200000}
 
   qwen:
-    display_name: 阿里通义千问
+    display_name: Alibaba Qwen
     base_urls:
       openai: https://dashscope.aliyuncs.com/compatible-mode/v1
       anthropic: https://dashscope.aliyuncs.com/apps/anthropic
@@ -138,105 +133,104 @@ presets:
     region: china
     doc_url: https://help.aliyun.com/document_detail/2712195.html
     models:
-      - {name: qwen-max, alias: "max", context: 32768}
-      - {name: qwen-max-latest, alias: "max-latest", context: 32768}
-      - {name: qwen-plus, alias: "plus", context: 131072}
-      - {name: qwen-plus-latest, alias: "plus-latest", context: 131072}
-      - {name: qwen-turbo, alias: "turbo", context: 131072}
-      - {name: qwen-turbo-latest, alias: "turbo-latest", context: 131072}
-      - {name: qwen-long, alias: "long", context: 10000000}
-      - {name: qwen-coder-plus, alias: "coder-plus", context: 131072}
-      - {name: qwen-coder-turbo, alias: "coder-turbo", context: 131072}
-      - {name: qwen-vl-max, alias: "vl-max", context: 32768}
-      - {name: qwen-vl-plus, alias: "vl-plus", context: 8192}
-      - {name: qwen-audio-turbo, alias: "audio", context: 8192}
-      - {name: qwen3-max, alias: "qwen3-max", context: 131072}
+      - {name: qwen3.6-plus, alias: "qwen3.6-plus", context: 1048576}
+      - {name: qwen3.6-flash, alias: "qwen3.6-flash", context: 1048576}
+      - {name: qwen3-max, alias: "qwen3-max", context: 262144}
+      - {name: qwen3-coder-plus, alias: "qwen3-coder-plus", context: 1048576}
+      - {name: qwen3-coder-next, alias: "qwen3-coder-next", context: 1048576}
+      - {name: qwen3-vl-plus, alias: "qwen3-vl-plus", context: 262144}
+      - {name: qwq-plus, alias: "qwq-plus", context: 131072}
+      - {name: qwen-long, alias: "qwen-long", context: 10000000}
+      - {name: qwen3.5-omni-flash, alias: "qwen3.5-omni-flash", context: 1048576}
 
   tencent:
-    display_name: 腾讯混元
+    display_name: Tencent Hunyuan
     base_urls:
       openai: https://api.hunyuan.cloud.tencent.com/v1
     format: openai
     region: china
     doc_url: https://cloud.tencent.com/document/product/1729
     models:
+      - {name: hy3-preview, alias: "hy3-preview", context: 256000}
       - {name: hunyuan-turbo, alias: "turbo", context: 32000}
       - {name: hunyuan-turbo-latest, alias: "turbo-latest", context: 32000}
       - {name: hunyuan-pro, alias: "pro", context: 32000}
-      - {name: hunyuan-standard, alias: "standard", context: 32000}
       - {name: hunyuan-standard-256k, alias: "standard-256k", context: 256000}
       - {name: hunyuan-lite, alias: "lite", context: 256000}
-      - {name: hunyuan-vision, alias: "vision", context: 8192}
       - {name: hunyuan-coding, alias: "coding", context: 32000}
 
   baidu:
-    display_name: 百度文心
+    display_name: Baidu Wenxin
     base_urls:
       openai: https://aigp.baidu.com/rpc/1.0/v1
     format: openai
     region: china
     doc_url: https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html
     models:
+      - {name: ernie-5.0, alias: "ernie-5.0", context: 128000}
       - {name: ernie-4.5-8k, alias: "ernie-4.5", context: 8192}
       - {name: ernie-4.0-8k, alias: "ernie-4", context: 8192}
       - {name: ernie-4.0-turbo-8k, alias: "ernie-4-turbo", context: 8192}
-      - {name: ernie-3.5-8k, alias: "ernie-3.5", context: 8192}
       - {name: ernie-speed-8k, alias: "speed", context: 8192}
       - {name: ernie-lite-8k, alias: "lite", context: 8192}
-      - {name: ernie-tiny-8k, alias: "tiny", context: 8192}
 
   qianfan:
-    display_name: 百度千帆
+    display_name: Baidu Qianfan
     base_urls:
       openai: https://qianfan.baidubce.com/v2
     format: openai
     region: china
     doc_url: https://cloud.baidu.com/doc/WENXINWORKSHOP/s/fl3o9l4bc
     models:
-      - {name: yi-34b-chat, alias: "yi", context: 4096}
-      - {name: llama-2-70b-chat, alias: "llama-70b", context: 4096}
-      - {name: qwen-72b-chat, alias: "qwen-72b", context: 4096}
-      - {name: chatglm3-6b, alias: "glm-6b", context: 4096}
-      - {name: baichuan2-13b-chat, alias: "baichuan", context: 4096}
+      - {name: ernie-5.0, alias: "ernie-5.0", context: 128000}
+      - {name: deepseek-v4-pro, alias: "deepseek-v4-pro", context: 1048576}
+      - {name: deepseek-v4-flash, alias: "deepseek-v4-flash", context: 1048576}
+      - {name: qwen3.6-plus, alias: "qwen3.6-plus", context: 1048576}
+      - {name: yi-34b-chat, alias: "yi-34b", context: 4096}
 
   huawei:
-    display_name: 华为盘古
+    display_name: Huawei Pangu
     base_urls:
       openai: https://pangu-api.huawei.com/api/v1
     format: openai
     region: china
     doc_url: https://www.huawei.com/cn/products/cloud/pangu-models
     models:
-      - {name: pangu-nlp-5b, alias: "pangu-5b", context: 4096}
+      - {name: pangu-sigma, alias: "pangu-sigma", context: 32768}
       - {name: pangu-nlp-10b, alias: "pangu-10b", context: 4096}
-      - {name: pangu-sigma, alias: "sigma", context: 4096}
+      - {name: pangu-nlp-5b, alias: "pangu-5b", context: 4096}
 
   moonshot:
-    display_name: 月之暗面 Kimi
+    display_name: Moonshot Kimi
     base_urls:
       openai: https://api.moonshot.cn/v1
     format: openai
     region: china
     doc_url: https://platform.moonshot.cn/console/api-keys
     models:
-      - {name: moonshot-v1-8k, alias: "kimi-8k", context: 8192}
-      - {name: moonshot-v1-32k, alias: "kimi-32k", context: 32768}
+      - {name: kimi-k2.6, alias: "kimi-k2.6", context: 262144}
+      - {name: kimi-k2.5, alias: "kimi-k2.5", context: 262144}
+      - {name: kimi-k2-thinking-turbo, alias: "kimi-k2-thinking", context: 262144}
       - {name: moonshot-v1-128k, alias: "kimi-128k", context: 131072}
+      - {name: moonshot-v1-32k, alias: "kimi-32k", context: 32768}
+      - {name: moonshot-v1-8k, alias: "kimi-8k", context: 8192}
 
   minimax:
-    display_name: 稀宇 MiniMax
+    display_name: MiniMax
     base_urls:
       openai: https://api.minimax.chat/v1
     format: openai
     region: china
     doc_url: https://www.minimaxi.com/document/api-keys
     models:
-      - {name: abab6.5s-chat, alias: "6.5s", context: 24576}
-      - {name: abab6.5g-chat, alias: "6.5g", context: 24576}
-      - {name: abab6.5-chat, alias: "6.5", context: 24576}
+      - {name: MiniMax-M2.7, alias: "m2.7", context: 204800}
+      - {name: MiniMax-M2.5, alias: "m2.5", context: 204800}
+      - {name: MiniMax-M2.1, alias: "m2.1", context: 204800}
+      - {name: MiniMax-M1-80k, alias: "m1-80k", context: 1000000}
+      - {name: MiniMax-M1-40k, alias: "m1-40k", context: 1000000}
 
   siliconflow:
-    display_name: 硅基流动
+    display_name: SiliconFlow
     base_urls:
       openai: https://api.siliconflow.cn/v1
       anthropic: https://api.siliconflow.cn/v1
@@ -245,97 +239,100 @@ presets:
     region: china
     doc_url: https://siliconflow.cn/api-keys
     models:
-      - {name: Qwen/Qwen2.5-72B-Instruct, alias: "qwen-72b", context: 32768}
-      - {name: Qwen/Qwen3-235B-A22B, alias: "qwen3-235b", context: 128000}
-      - {name: deepseek-ai/DeepSeek-V3-0324, alias: "deepseek-v3", context: 131072}
+      - {name: deepseek-ai/DeepSeek-V4-Pro, alias: "deepseek-v4-pro", context: 1048576}
+      - {name: deepseek-ai/DeepSeek-V4-Flash, alias: "deepseek-v4-flash", context: 1048576}
+      - {name: Pro/zai-org/GLM-5.1, alias: "glm-5.1", context: 200000}
       - {name: deepseek-ai/DeepSeek-R1-0528, alias: "deepseek-r1", context: 131072}
+      - {name: Qwen/Qwen3-235B-A22B, alias: "qwen3-235b", context: 128000}
+      - {name: moonshotai/Kimi-K2-Instruct-0905, alias: "kimi-k2", context: 131072}
       - {name: meta-llama/Llama-3.3-70B-Instruct, alias: "llama-70b", context: 128000}
-      - {name: Pro/THUDM/GLM-4-9B-Chat, alias: "glm-4-9b", context: 8192}
+      - {name: THUDM/GLM-4-Flash, alias: "glm-4-flash", context: 8192}
 
   yi:
-    display_name: 零一万物
+    display_name: 01.AI Yi
     base_urls:
       openai: https://api.lingyiwanwu.com/v1
     format: openai
     region: china
     doc_url: https://platform.lingyiwanwu.com/apikeys
     models:
-      - {name: yi-large, alias: "large", context: 32768}
-      - {name: yi-large-turbo, alias: "large-turbo", context: 32768}
-      - {name: yi-medium, alias: "medium", context: 16384}
-      - {name: yi-medium-200k, alias: "medium-200k", context: 200000}
-      - {name: yi-spark, alias: "spark", context: 16384}
-      - {name: yi-vision, alias: "vision", context: 16384}
+      - {name: yi-large, alias: "yi-large", context: 32768}
+      - {name: yi-large-turbo, alias: "yi-large-turbo", context: 16384}
+      - {name: yi-lightning, alias: "yi-lightning", context: 16384}
+      - {name: yi-medium, alias: "yi-medium", context: 16384}
+      - {name: yi-medium-200k, alias: "yi-medium-200k", context: 200000}
+      - {name: yi-vision, alias: "yi-vision", context: 16384}
 
   stepfun:
-    display_name: 阶跃星辰
+    display_name: StepFun
     base_urls:
       openai: https://api.stepfun.com/v1
     format: openai
     region: china
     doc_url: https://platform.stepfun.com/docs/api-keys/create-api-key
     models:
-      - {name: step-1-8k, alias: "step-8k", context: 8192}
-      - {name: step-1-32k, alias: "step-32k", context: 32768}
-      - {name: step-1-128k, alias: "step-128k", context: 131072}
-      - {name: step-1-256k, alias: "step-256k", context: 262144}
-      - {name: step-2-8k, alias: "step-2", context: 8192}
+      - {name: step-3.5-flash, alias: "step-3.5-flash", context: 256000}
+      - {name: step-3, alias: "step-3", context: 65536}
+      - {name: step-2, alias: "step-2", context: 8192}
+      - {name: step-2-mini, alias: "step-2-mini", context: 8192}
+      - {name: step-1o-vision-32k, alias: "step-1o-vision", context: 32768}
 
   baichuan:
-    display_name: 百川智能
+    display_name: Baichuan
     base_urls:
       openai: https://api.baichuan-ai.com/v1
     format: openai
     region: china
     doc_url: https://platform.baichuan-ai.com/console/api-key
     models:
-      - {name: Baichuan4, alias: "bc4", context: 128000}
-      - {name: Baichuan4-Turbo, alias: "bc4-turbo", context: 128000}
+      - {name: Baichuan4, alias: "bc4", context: 32768}
+      - {name: Baichuan4-Turbo, alias: "bc4-turbo", context: 196608}
+      - {name: Baichuan4-Air, alias: "bc4-air", context: 32768}
       - {name: Baichuan3-Turbo, alias: "bc3-turbo", context: 128000}
       - {name: Baichuan3-Turbo-128k, alias: "bc3-128k", context: 128000}
 
   xunfei:
-    display_name: 讯飞星火
+    display_name: iFlytek Spark
     base_urls:
       openai: https://spark-api-open.xf-yun.com/v1
     format: openai
     region: china
     doc_url: https://xinghuo.xfyun.cn/sparkapi
     models:
-      - {name: spark4.0-ultra, alias: "spark-4-ultra", context: 8192}
-      - {name: spark4.0-max, alias: "spark-4-max", context: 8192}
-      - {name: generalv3.5, alias: "spark-3.5", context: 8192}
-      - {name: generalv3, alias: "spark-3", context: 8192}
+      - {name: spark4.0-ultra, alias: "spark-4-ultra", context: 32768}
+      - {name: generalv3.5, alias: "spark-max", context: 8192}
+      - {name: generalv3, alias: "spark-pro", context: 8192}
+      - {name: lite, alias: "spark-lite", context: 4096}
 
   doubao:
-    display_name: 字节豆包
+    display_name: ByteDance Doubao
     base_urls:
       openai: https://ark.cn-beijing.volces.com/api/v3
     format: openai
     region: china
     doc_url: https://www.volcengine.com/docs/82379/1299815
     models:
-      - {name: doubao-pro-32k, alias: "pro-32k", context: 32768}
+      - {name: doubao-seed-2.0-pro, alias: "seed-2.0-pro", context: 262144}
+      - {name: doubao-seed-2.0-lite, alias: "seed-2.0-lite", context: 262144}
+      - {name: doubao-seed-2.0-mini, alias: "seed-2.0-mini", context: 262144}
+      - {name: doubao-seed-2.0-code, alias: "seed-2.0-code", context: 262144}
       - {name: doubao-pro-128k, alias: "pro-128k", context: 131072}
-      - {name: doubao-lite-32k, alias: "lite-32k", context: 32768}
       - {name: doubao-lite-128k, alias: "lite-128k", context: 131072}
-      - {name: doubao-1.5-pro-32k, alias: "1.5-pro", context: 32768}
-      - {name: doubao-1.5-pro-128k, alias: "1.5-pro-128k", context: 131072}
 
   parallel:
-    display_name: 并行科技
+    display_name: ParaTech
     base_urls:
       openai: https://api.paralos.com/v1
     format: openai
     region: china
     doc_url: https://www.parallelchain.cn
     models:
-      - {name: paralos-1, alias: "p1", context: 8192}
-      - {name: paralos-2, alias: "p2", context: 8192}
       - {name: paralos-pro, alias: "pro", context: 32768}
+      - {name: paralos-2, alias: "p2", context: 8192}
+      - {name: paralos-1, alias: "p1", context: 8192}
 
   modelscope:
-    display_name: 魔塔社区 (ModelScope)
+    display_name: ModelScope
     base_urls:
       openai: https://api-inference.modelscope.cn
       anthropic: https://api-inference.modelscope.cn
@@ -344,14 +341,14 @@ presets:
     region: china
     doc_url: https://modelscope.cn/my/myaccesstoken
     models:
-      - {name: deepseek-ai/DeepSeek-V3-0324, alias: "deepseek-v3", context: 131072}
+      - {name: deepseek-ai/DeepSeek-V4-Pro, alias: "deepseek-v4-pro", context: 1048576}
+      - {name: deepseek-ai/DeepSeek-V4-Flash, alias: "deepseek-v4-flash", context: 1048576}
       - {name: deepseek-ai/DeepSeek-R1-0528, alias: "deepseek-r1", context: 131072}
       - {name: Qwen/Qwen3-235B-A22B, alias: "qwen3-235b", context: 131072}
       - {name: Qwen/Qwen3-30B-A3B, alias: "qwen3-30b", context: 32768}
-      - {name: Qwen/Qwen2.5-72B-Instruct, alias: "qwen2.5-72b", context: 32768}
       - {name: THUDM/GLM-4.6, alias: "glm-4.6", context: 128000}
       - {name: moonshotai/Kimi-K2-Instruct-0905, alias: "kimi-k2", context: 131072}
-      - {name: meta-llama/Meta-Llama-3.1-70B-Instruct, alias: "llama-70b", context: 128000}
+      - {name: meta-llama/Meta-Llama-3.3-70B-Instruct, alias: "llama-70b", context: 128000}
 
   # ===== Aggregation Platforms =====
   together:
@@ -362,10 +359,14 @@ presets:
     region: global
     doc_url: https://api.together.xyz/settings/api-keys
     models:
-      - {name: meta-llama/Llama-4-Scout-17B-16E-Instruct, alias: "llama-4-scout", context: 128000}
-      - {name: meta-llama/Llama-3.3-70B-Instruct-Turbo, alias: "llama-70b", context: 128000}
-      - {name: Qwen/Qwen3-235B-A22B, alias: "qwen3-235b", context: 128000}
-      - {name: deepseek-ai/DeepSeek-V3, alias: "deepseek-v3", context: 131072}
+      - {name: moonshotai/Kimi-K2.6, alias: "kimi-k2.6", context: 262144}
+      - {name: MiniMaxAI/MiniMax-M2.7, alias: "minimax-m2.7", context: 204800}
+      - {name: zai-org/GLM-5.1, alias: "glm-5.1", context: 200000}
+      - {name: Qwen/Qwen3.5-397B-A17B, alias: "qwen3.5-397b", context: 262144}
+      - {name: deepseek-ai/DeepSeek-V3.1, alias: "deepseek-v3.1", context: 128000}
+      - {name: meta-llama/Llama-3.3-70B-Instruct-Turbo, alias: "llama-70b", context: 131072}
+      - {name: meta-llama/Llama-4-Maverick-17B-128E-Instruct, alias: "llama-4-maverick", context: 1048576}
+      - {name: openai/gpt-oss-120b, alias: "gpt-oss-120b", context: 128000}
 
   replicate:
     display_name: Replicate
@@ -375,8 +376,9 @@ presets:
     region: global
     doc_url: https://replicate.com/account/api-tokens
     models:
-      - {name: meta/llama-2-70b-chat, alias: "llama-2-70b", context: 4096}
-      - {name: mistralai/mixtral-8x7b-instruct-v0.1, alias: "mixtral", context: 32768}
+      - {name: meta/meta-llama-3.3-70b-instruct, alias: "llama-3.3-70b", context: 128000}
+      - {name: deepseek-ai/deepseek-v3, alias: "deepseek-v3", context: 131072}
+      - {name: mistralai/mistral-small-3.1-24b, alias: "mistral-small-3.1", context: 128000}
 
   openrouter:
     display_name: OpenRouter
@@ -388,7 +390,11 @@ presets:
     region: global
     doc_url: https://openrouter.ai/keys
     models:
-      - {name: openai/gpt-4o, alias: "gpt-4o", context: 128000}
-      - {name: anthropic/claude-sonnet-4-5, alias: "claude-sonnet-4-5", context: 200000}
+      - {name: openai/gpt-5.4, alias: "gpt-5.4", context: 1050000}
+      - {name: anthropic/claude-opus-4.7, alias: "claude-opus-4.7", context: 200000}
+      - {name: anthropic/claude-sonnet-4.6, alias: "claude-sonnet-4.6", context: 200000}
       - {name: google/gemini-2.5-pro, alias: "gemini-2.5-pro", context: 1048576}
-      - {name: meta-llama/llama-4-scout, alias: "llama-4-scout", context: 128000}
+      - {name: moonshotai/kimi-k2.6, alias: "kimi-k2.6", context: 262144}
+      - {name: deepseek/deepseek-v4-pro, alias: "deepseek-v4-pro", context: 1048576}
+      - {name: meta-llama/llama-4-maverick, alias: "llama-4-maverick", context: 1048576}
+      - {name: tencent/hy3-preview, alias: "hy3-preview", context: 256000}

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-04-28
+
+### Changed — DDD Architecture (fluxcore v1.0.0)
+
+- **RouteRepository replaces routeRepo**: `fluxcore.RouteRepository.FindOrCreate()` with TTL 300s, capacity 50000, background cleanup. Circuit breaker state survives config reloads.
+- **Router.Execute replaces DoFunc**: `fluxcore.Router.Execute(ctx, table, body, maxRetry)` handles route selection, retry, failover, and two-layer health feedback in one call.
+- **ServiceEndpoint + Route aggregates**: Network CB (threshold=1, recovery=120s) on ServiceEndpoint; model CB (threshold=3, recovery=60s) on Route. Route identity via `hash(ServiceName, Model, Credential)`.
+- **RouteTable pre-computation**: `buildTables()` constructs immutable `map[Model]*RouteTable` at startup and reload. `Select()` is O(n) with equal-priority random shuffle.
+- **ProtocolPriority fallback**: `selectTargetProto()` uses `fluxcore.ProtocolPriority()` for deterministic protocol selection when the service doesn't support the input protocol.
+- **CB state persistence across SIGHUP**: `Reload()` swaps `atomic.Pointer[routerCtx]` and reuses ServiceEndpoints + RouteRepository — no global state to clear.
+- **Removed**: `buildDoFuncs()`, `buildClients()`, `DoFunc` map tables, `GlobalRegistry().Clear()` in Reload.
+- **`rewriteModelInRequest` fixed**: replaced `bytes.Replace` with `json.RawMessage`-based field update to avoid false matches in message content.
+
+### Migration Guide (v0.7.2 → v0.7.3)
+
+```go
+// Before (v0.7.2)
+doFunc := doFuncs[model]
+resp, usage, url, err := doFunc(ctx, body)
+
+// After (v0.7.3)
+table := tables[fluxcore.Model(model)]
+route, resp, usage, err := oaRouter.Execute(ctx, table, body, retryMax)
+providerURL := route.SvcEP().Service().BaseURLFor(targetProto)
+```
+
 ## [0.7.2] - 2026-04-28
 
 ### Changed — base_url → base_urls (Per-Protocol Provider URLs)

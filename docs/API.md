@@ -21,9 +21,9 @@ TokRouter 根据 **URL 路径** 决定输入协议：
 - `POST /v1/chat/completions` → **输入协议 = OpenAI**。调用 `ForwardOpenAI`。
 - `POST /v1/messages` → **输入协议 = Anthropic**。调用 `ForwardAnthropic`。
 
-每个 Endpoint 声明其**协议能力列表** (`protocols`)。路由时：
-- 若 endpoint 支持输入协议 → **直传**（无转换）
-- 若 endpoint 不支持输入协议 → 回退到 `protocols[0]`，自动进行协议转换
+路由时 fluxcore 自动处理协议匹配：
+- 若 Service 的 BaseURLs 包含输入协议 → **直传**（无转换）
+- 若不包含 → 按 `ProtocolPriority()`（OpenAI > Anthropic > Gemini > Cohere）选择可用协议，自动进行协议转换
 
 ---
 
@@ -164,14 +164,14 @@ curl -X POST http://localhost:8765/v1/messages \
 
 ## GET /status
 
-返回所有 Provider 的运行时状态。
+返回所有 ServiceEndpoint 的运行时状态（含双层熔断信息）。
 
 ### 响应
 
 ```json
 [
   {
-    "name": "https://api.openai.com/v1",
+    "name": "openai",
     "protocol": "openai",
     "healthy": true,
     "models": [
@@ -184,10 +184,10 @@ curl -X POST http://localhost:8765/v1/messages \
 
 | 字段 | 说明 |
 |------|------|
-| name | Provider 的 PrimaryBaseURL |
-| protocol | 默认协议（protocols[0]） |
-| healthy | 至少一个模型健康则为 true |
-| models | 各模型的健康状态 |
+| name | ServiceEndpoint 名称 |
+| protocol | 主协议（BaseURLs 中优先级最高的） |
+| healthy | ServiceEndpoint 网络熔断 + 至少一个 Route 模型熔断均健康 |
+| models | 各 Route 的健康状态（双层：网络 + 模型熔断） |
 
 ### curl 示例
 
@@ -206,7 +206,7 @@ curl http://localhost:8765/status
 ```json
 {
   "status": "ok",
-  "version": "v0.7.2",
+  "version": "v0.7.3",
   "details": {
     "endpoints": {"total": 2, "healthy": 2},
     "usage": "ok"
@@ -221,7 +221,7 @@ curl http://localhost:8765/status
 ```json
 {
   "status": "degraded",
-  "version": "v0.7.2",
+  "version": "v0.7.3",
   "details": {
     "endpoints": {"total": 2, "healthy": 0},
     "usage": "ok"

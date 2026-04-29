@@ -3,7 +3,7 @@ package router
 import (
 	"context"
 
-	"github.com/tokzone/fluxcore/flux"
+	"github.com/tokzone/fluxcore"
 	"github.com/tokzone/fluxcore/message"
 
 	"github.com/tokzone/tokrouter/config"
@@ -12,16 +12,16 @@ import (
 
 // MockRouter implements Router for testing.
 type MockRouter struct {
-	ForwardOpenAIFunc         func(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error)
-	ForwardAnthropicFunc      func(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error)
-	ForwardStreamOpenAIFunc   func(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error)
-	ForwardStreamAnthropicFunc func(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error)
-	RecordStreamUsageFunc     func(usage *message.Usage, model string, providerURL string)
-	ProviderStatusesFunc      func() []ProviderStatus
-	StatsFunc                 func(filter usage.QueryFilter) ([]usage.StatRow, error)
-	ServerConfigFunc          func() config.ServerConfig
-	ReloadFunc                func(cfg *config.Config) error
-	CloseFunc                 func() error
+	ForwardOpenAIFunc          func(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error)
+	ForwardAnthropicFunc       func(ctx context.Context, body []byte, model string) ([]byte, *message.Usage, error)
+	ForwardStreamOpenAIFunc    func(ctx context.Context, body []byte, model string) (*fluxcore.StreamResult, string, string, error)
+	ForwardStreamAnthropicFunc func(ctx context.Context, body []byte, model string) (*fluxcore.StreamResult, string, string, error)
+	RecordStreamUsageFunc      func(usage *message.Usage, model string, providerURL string)
+	ProviderStatusesFunc       func() []ProviderStatus
+	StatsFunc                  func(filter usage.QueryFilter) ([]usage.StatRow, error)
+	ServerConfigFunc           func() config.ServerConfig
+	ReloadFunc                 func(cfg *config.Config) error
+	CloseFunc                  func() error
 }
 
 var _ Router = (*MockRouter)(nil)
@@ -40,28 +40,28 @@ func (m *MockRouter) ForwardAnthropic(ctx context.Context, body []byte, model st
 	return []byte(`{"content": [{"text": "mock response"}]}`), &message.Usage{InputTokens: 10, OutputTokens: 5}, nil
 }
 
-func (m *MockRouter) ForwardStreamOpenAI(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error) {
+func (m *MockRouter) ForwardStreamOpenAI(ctx context.Context, body []byte, model string) (*fluxcore.StreamResult, string, string, error) {
 	if m.ForwardStreamOpenAIFunc != nil {
 		return m.ForwardStreamOpenAIFunc(ctx, body, model)
 	}
 	ch := make(chan []byte, 1)
 	ch <- []byte(`data: {"choices": [{"delta": {"content": "mock"}}]}\n\n`)
 	close(ch)
-	return &flux.StreamResult{
+	return &fluxcore.StreamResult{
 		Ch:    ch,
 		Usage: func() *message.Usage { return &message.Usage{InputTokens: 10, OutputTokens: 5} },
 		Error: func() error { return nil },
 	}, model, "https://mock.example.com", nil
 }
 
-func (m *MockRouter) ForwardStreamAnthropic(ctx context.Context, body []byte, model string) (*flux.StreamResult, string, string, error) {
+func (m *MockRouter) ForwardStreamAnthropic(ctx context.Context, body []byte, model string) (*fluxcore.StreamResult, string, string, error) {
 	if m.ForwardStreamAnthropicFunc != nil {
 		return m.ForwardStreamAnthropicFunc(ctx, body, model)
 	}
 	ch := make(chan []byte, 1)
 	ch <- []byte(`data: {"type": "content_block_delta"}\n\n`)
 	close(ch)
-	return &flux.StreamResult{
+	return &fluxcore.StreamResult{
 		Ch:    ch,
 		Usage: func() *message.Usage { return &message.Usage{InputTokens: 10, OutputTokens: 5} },
 		Error: func() error { return nil },

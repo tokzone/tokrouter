@@ -6,14 +6,11 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/spf13/viper"
 
-	"github.com/tokzone/fluxcore/endpoint"
-	"github.com/tokzone/fluxcore/flux"
-	"github.com/tokzone/fluxcore/provider"
+	"github.com/tokzone/fluxcore"
 )
 
 // Config is the main configuration structure
@@ -72,66 +69,6 @@ type KeyConfig struct {
 	Models    []ModelConfig     `mapstructure:"models"`
 }
 
-// Protocol returns the provider.Protocol for this key config (default protocol).
-// Derives from the preset (via Provider field), or falls back to Format.
-func (k *KeyConfig) Protocol() provider.Protocol {
-	if k.Provider != "" {
-		if preset, err := GetPreset(k.Provider); err == nil {
-			if len(preset.Protocols) > 0 {
-				if p, err := ParseProtocol(preset.Protocols[0]); err == nil {
-					return p
-				}
-			}
-			if preset.Format != "" {
-				if p, err := ParseProtocol(preset.Format); err == nil {
-					return p
-				}
-			}
-		}
-	}
-	if k.Format != "" {
-		if p, err := ParseProtocol(k.Format); err == nil {
-			return p
-		}
-	}
-	return provider.ProtocolOpenAI
-}
-
-// ProtocolList returns the list of supported protocols for this key.
-// Derives from the preset (via Provider field), or falls back to Format.
-func (k *KeyConfig) ProtocolList() []provider.Protocol {
-	if k.Provider != "" {
-		if preset, err := GetPreset(k.Provider); err == nil {
-			if len(preset.Protocols) > 0 {
-				result := make([]provider.Protocol, 0, len(preset.Protocols))
-				for _, s := range preset.Protocols {
-					p, err := ParseProtocol(s)
-					if err != nil {
-						continue
-					}
-					if !slices.Contains(result, p) {
-						result = append(result, p)
-					}
-				}
-				if len(result) > 0 {
-					return result
-				}
-			}
-			if preset.Format != "" {
-				if p, err := ParseProtocol(preset.Format); err == nil {
-					return []provider.Protocol{p}
-				}
-			}
-		}
-	}
-	if k.Format != "" {
-		if p, err := ParseProtocol(k.Format); err == nil {
-			return []provider.Protocol{p}
-		}
-	}
-	return []provider.Protocol{provider.ProtocolOpenAI}
-}
-
 // HasModel returns true if the key has a model with the given name.
 func (k *KeyConfig) HasModel(name string) bool {
 	for _, m := range k.Models {
@@ -140,15 +77,6 @@ func (k *KeyConfig) HasModel(name string) bool {
 		}
 	}
 	return false
-}
-
-// AddModel adds a model with the given name. Returns true if added.
-func (k *KeyConfig) AddModel(name string) bool {
-	if k.HasModel(name) {
-		return false
-	}
-	k.Models = append(k.Models, ModelConfig{Name: name})
-	return true
 }
 
 // RemoveModel removes a model with the given name. Returns true if removed.
@@ -216,6 +144,9 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("resolve config path: %w", err)
 	}
 	configDir := filepath.Dir(absConfigPath)
+
+	// Merge external presets.yaml if present (once per process)
+	MergeExternalPresets(configDir)
 
 	v := viper.New()
 
@@ -377,7 +308,8 @@ Suggestion: Add the format in config.yaml:
 			}
 
 			// Validate format if set
-			if k.Format != "" && !isValidProtocol(k.Format) {
+			if k.Format != "" {
+			if _, err := fluxcore.ParseProtocol(k.Format); err != nil {
 				return fmt.Errorf(`%s: invalid format %q
 
 Suggestion: Use one of the supported formats:
@@ -385,6 +317,7 @@ Suggestion: Use one of the supported formats:
   - anthropic
   - gemini
   - cohere`, keyPath, k.Format)
+			}
 			}
 
 			// Models should be populated by preset or user
@@ -458,87 +391,6 @@ const (
 	FormatCohere    = "cohere"
 )
 
-// toProtoURLs converts a string-keyed BaseURLs map to a provider.Protocol-keyed map.
-func toProtoURLs(stringURLs map[string]string) map[provider.Protocol]string {
-	result := make(map[provider.Protocol]string, len(stringURLs))
-	for protoStr, url := range stringURLs {
-		if p, err := ParseProtocol(protoStr); err == nil {
-			result[p] = url
-		}
-	}
-	return result
-}
-
-// ParseProtocol parses string to provider.Protocol
-func ParseProtocol(s string) (provider.Protocol, error) {
-	switch s {
-	case FormatOpenAI:
-		return provider.ProtocolOpenAI, nil
-	case FormatAnthropic:
-		return provider.ProtocolAnthropic, nil
-	case FormatGemini:
-		return provider.ProtocolGemini, nil
-	case FormatCohere:
-		return provider.ProtocolCohere, nil
-	default:
-		return provider.ProtocolOpenAI, fmt.Errorf("invalid protocol: %q", s)
-	}
-}
-
-// IsValidFormat checks if format string is valid (exported for CLI use)
-func IsValidFormat(s string) bool {
-	return s == FormatOpenAI || s == FormatAnthropic || s == FormatGemini || s == FormatCohere
-}
-
-// isValidProtocol checks if protocol string is valid
-func isValidProtocol(s string) bool {
-	return IsValidFormat(s)
-}
-
-func (c *Config) ToUserEndpoints() []*flux.UserEndpoint {
-	totalModels := 0
-	for _, kc := range c.Keys {
-		if kc.Enabled {
-			totalModels += len(kc.Models)
-		}
-	}
-	userEndpoints := make([]*flux.UserEndpoint, 0, totalModels)
-
-	providerID := uint(1)
-	endpointID := uint(1)
-
-	for _, kc := range c.Keys {
-		if !kc.Enabled {
-			continue
-		}
-
-		prov := provider.NewProvider(providerID, toProtoURLs(kc.BaseURLs))
-		providerID++
-
-		apiKey, err := flux.NewAPIKey(prov, kc.Secret)
-		if err != nil {
-			continue
-		}
-
-		protocols := kc.ProtocolList()
-
-		for _, mc := range kc.Models {
-			ep := endpoint.RegisterEndpoint(endpointID, prov, mc.Name, protocols)
-			if ep == nil {
-				continue
-			}
-			endpointID++
-
-			ue, err := flux.NewUserEndpoint(mc.Name, apiKey, mc.Priority)
-			if err != nil {
-				continue
-			}
-			userEndpoints = append(userEndpoints, ue)
-		}
-	}
-
-	return userEndpoints
-}
 
 // FindKey finds a key by name, returns nil if not found
 func (c *Config) FindKey(name string) *KeyConfig {
@@ -573,6 +425,57 @@ func (c *Config) AliasMap() map[string]string {
 		}
 	}
 	return aliasMap
+}
+
+// ToRoutes creates Route instances from the config using the given ServiceEndpoints and route repository.
+// ServiceEndpoint keys are the provider's primary base URL.
+func (c *Config) ToRoutes(svcEPs map[string]*fluxcore.ServiceEndpoint, findOrCreate func(fluxcore.RouteDesc) *fluxcore.Route) []*fluxcore.Route {
+	var routes []*fluxcore.Route
+
+	for _, kc := range c.Keys {
+		if !kc.Enabled {
+			continue
+		}
+
+		svc := fluxcore.Service{
+			Name:     kc.Name,
+			BaseURLs: convertBaseURLs(kc.BaseURLs),
+		}
+		if svc.Name == "" {
+			svc.Name = kc.Provider
+		}
+
+		se, ok := svcEPs[svc.Name]
+		if !ok {
+			se = fluxcore.NewServiceEndpoint(svc)
+			svcEPs[svc.Name] = se
+		}
+
+		for _, mc := range kc.Models {
+			desc := fluxcore.RouteDesc{
+				SvcEP:      se,
+				Model:      fluxcore.Model(mc.Name),
+				Credential: kc.Secret,
+				Priority:   mc.Priority,
+			}
+			route := findOrCreate(desc)
+			routes = append(routes, route)
+		}
+	}
+
+	return routes
+}
+
+func convertBaseURLs(stringURLs map[string]string) map[fluxcore.Protocol]string {
+	result := make(map[fluxcore.Protocol]string, len(stringURLs))
+	for protoStr, url := range stringURLs {
+		p, err := fluxcore.ParseProtocol(protoStr)
+		if err != nil {
+			continue
+		}
+		result[p] = url
+	}
+	return result
 }
 
 // Save saves configuration to file

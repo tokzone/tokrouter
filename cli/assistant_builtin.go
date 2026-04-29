@@ -11,18 +11,19 @@ func builtinAssistants() []AssistantConfig {
 			Name:         "claude-code",
 			DisplayName:  "Claude Code",
 			ConfigType:   "env",
-			CheckCommand: "claude", // 命令检测
+			CheckCommand: "claude",
 			ConfigPaths:  getShellProfilePaths(),
 			EnvVars: []EnvVarConfig{
 				{Name: "ANTHROPIC_BASE_URL", Value: "{{URL}}"},
 				{Name: "ANTHROPIC_API_KEY", Value: "tokrouter-key"},
 			},
+			ModelNote: "Use /model in Claude Code to select your preferred model.",
 		},
 		{
 			Name:         "cursor",
 			DisplayName:  "Cursor",
 			ConfigType:   "json",
-			CheckCommand: "", // IDE 无命令，用目录检测
+			CheckCommand: "",
 			ConfigPaths: []string{
 				"~/.cursor/config.json",
 				"${APPDATA}/Cursor/User/globalStorage/settings.json",
@@ -33,23 +34,25 @@ func builtinAssistants() []AssistantConfig {
 					"baseURL": "{{URL}}/v1",
 				},
 			},
+			ModelNote: "Open Cursor Settings > Models and select your model from the list.",
 		},
 		{
 			Name:         "aider",
 			DisplayName:  "Aider",
 			ConfigType:   "env",
-			CheckCommand: "aider", // 命令检测
+			CheckCommand: "aider",
 			ConfigPaths:  getShellProfilePaths(),
 			EnvVars: []EnvVarConfig{
 				{Name: "OPENAI_API_BASE", Value: "{{URL}}/v1"},
 				{Name: "OPENAI_API_KEY", Value: "tokrouter-key"},
 			},
+			ModelNote: "Run aider with: aider --model {{MODEL}}",
 		},
 		{
 			Name:         "windsurf",
 			DisplayName:  "Windsurf",
 			ConfigType:   "json",
-			CheckCommand: "", // IDE 无命令，用目录检测
+			CheckCommand: "",
 			ConfigPaths: []string{
 				"~/.windsurf/config.json",
 				"${APPDATA}/Windsurf/User/globalStorage/settings.json",
@@ -60,12 +63,13 @@ func builtinAssistants() []AssistantConfig {
 					"baseURL": "{{URL}}/v1",
 				},
 			},
+			ModelNote: "Open Windsurf Settings > Models and select your model from the list.",
 		},
 		{
 			Name:         "cline",
 			DisplayName:  "Cline (VS Code)",
 			ConfigType:   "json",
-			CheckCommand: "code", // VS Code 命令检测（插件依赖 VS Code）
+			CheckCommand: "code",
 			ConfigPaths: []string{
 				"~/.vscode/settings.json",
 				"${APPDATA}/Code/User/settings.json",
@@ -76,12 +80,13 @@ func builtinAssistants() []AssistantConfig {
 					"baseUrl": "{{URL}}/v1",
 				},
 			},
+			ModelNote: "Open Cline settings in VS Code and configure your model.",
 		},
 		{
 			Name:         "continue",
 			DisplayName:  "Continue.dev",
 			ConfigType:   "json",
-			CheckCommand: "code", // VS Code 命令检测（插件依赖 VS Code）
+			CheckCommand: "code",
 			ConfigPaths: []string{
 				"~/.continue/config.json",
 			},
@@ -93,15 +98,34 @@ func builtinAssistants() []AssistantConfig {
 					},
 				},
 			},
+			ModelNote: "Edit ~/.continue/config.json and set the model field to your preferred model.",
+		},
+		{
+			Name:         "codex",
+			DisplayName:  "OpenAI Codex",
+			ConfigType:   "toml",
+			CheckCommand: "codex",
+			ConfigPaths: []string{
+				"~/.codex/config.toml",
+			},
+			TOMLConfig: map[string]string{
+				"model_provider":                      "tokrouter",
+				"model":                               "{{MODEL}}",
+				"model_context_window":                "{{CONTEXT}}",
+				"model_providers.tokrouter.name":      "tokrouter",
+				"model_providers.tokrouter.base_url":  "{{URL}}/v1",
+			},
+			EnvVars: []EnvVarConfig{
+				{Name: "OPENAI_API_KEY", Value: "tokrouter-key"},
+			},
 		},
 	}
 }
 
 // getShellProfilePaths returns shell profile paths based on OS
-// This is configuration data, not logic.
 func getShellProfilePaths() []string {
 	if runtime.GOOS == "windows" {
-		return []string{"${PROFILE}"} // PowerShell profile
+		return []string{"${PROFILE}"}
 	}
 	return []string{
 		"~/.zshrc",

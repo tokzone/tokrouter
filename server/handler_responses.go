@@ -77,17 +77,21 @@ type chatCompletionResp struct {
 
 // --- Chat Completions SSE chunk types ---
 
+type chatUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
 type chatChunk struct {
+	ID      string `json:"id"`
+	Model   string `json:"model"`
 	Choices []struct {
 		Delta struct {
 			Content string `json:"content,omitempty"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
-	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-	} `json:"usage"`
+	Usage *chatUsage `json:"usage"`
 }
 
 // HandleResponses handles requests on the OpenAI Responses API endpoint (POST /v1/responses).
@@ -440,9 +444,16 @@ func writeResponsesSSE(w http.ResponseWriter, r *http.Request, result *fluxcore.
 	}
 
 	responseID := ""
-		for chunk := range result.Ch {
-			scanner := bufio.NewScanner(bytes.NewReader(chunk))
-			for scanner.Scan() {
+	responseModel := ""
+	createdSent := false
+	itemAdded := false
+	contentPartAdded := false
+	seq := 0
+	var accumulatedUsage *chatUsage
+
+	for chunk := range result.Ch {
+		scanner := bufio.NewScanner(bytes.NewReader(chunk))
+		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
 				continue
@@ -457,29 +468,180 @@ func writeResponsesSSE(w http.ResponseWriter, r *http.Request, result *fluxcore.
 				continue
 			}
 
+			// Capture response ID and model from first chunk
+			if responseID == "" && cc.ID != "" {
+				responseID = cc.ID
+				responseModel = cc.Model
+			}
+
+			// Send response.created + response.in_progress on first chunk
+			if !createdSent && responseID != "" {
+				now := time.Now().Unix()
+				seq++
+				createdData, _ := json.Marshal(map[string]interface{}{
+					"type": "response.created",
+					"sequence_number": seq,
+					"response": map[string]interface{}{
+						"id":         responseID,
+						"object":     "response",
+						"created_at": now,
+						"status":     "in_progress",
+						"model":      responseModel,
+						"output":     []interface{}{},
+					},
+				})
+				fmt.Fprintf(w, "event: response.created\ndata: %s\n\n", createdData)
+				flusher.Flush()
+
+				seq++
+				inProgressData, _ := json.Marshal(map[string]interface{}{
+					"type": "response.in_progress",
+					"sequence_number": seq,
+					"response": map[string]interface{}{
+						"id":     responseID,
+						"object": "response",
+						"status": "in_progress",
+					},
+				})
+				fmt.Fprintf(w, "event: response.in_progress\ndata: %s\n\n", inProgressData)
+				flusher.Flush()
+				createdSent = true
+			}
+
+			// Send output_item.added before first delta
+			if !itemAdded && responseID != "" {
+				seq++
+				itemID := responseID + "_item_0"
+				itemData, _ := json.Marshal(map[string]interface{}{
+					"type":            "response.output_item.added",
+					"sequence_number": seq,
+					"output_index":    0,
+					"item": map[string]interface{}{
+						"id":      itemID,
+						"type":    "message",
+						"status":  "in_progress",
+						"role":    "assistant",
+						"content": []interface{}{},
+					},
+				})
+				fmt.Fprintf(w, "event: response.output_item.added\ndata: %s\n\n", itemData)
+				flusher.Flush()
+				itemAdded = true
+			}
+
+			// Send content_part.added before first delta
+			if !contentPartAdded && responseID != "" {
+				seq++
+				itemID := responseID + "_item_0"
+				partData, _ := json.Marshal(map[string]interface{}{
+					"type":            "response.content_part.added",
+					"sequence_number": seq,
+					"output_index":    0,
+					"content_index":   0,
+					"item_id":         itemID,
+					"part": map[string]interface{}{
+						"type":        "output_text",
+						"text":        "",
+						"annotations": []interface{}{},
+					},
+				})
+				fmt.Fprintf(w, "event: response.content_part.added\ndata: %s\n\n", partData)
+				flusher.Flush()
+				contentPartAdded = true
+			}
+
 			if len(cc.Choices) > 0 && cc.Choices[0].Delta.Content != "" {
 				delta := cc.Choices[0].Delta.Content
-				sseData, _ := json.Marshal(map[string]string{"delta": delta})
-				fmt.Fprintf(w, "event: response.output_text.delta\ndata: %s\n\n", sseData)
+				seq++
+				itemID := responseID + "_item_0"
+				deltaData, _ := json.Marshal(map[string]interface{}{
+					"type":            "response.output_text.delta",
+					"sequence_number": seq,
+					"item_id":         itemID,
+					"output_index":    0,
+					"content_index":   0,
+					"delta":           delta,
+				})
+				fmt.Fprintf(w, "event: response.output_text.delta\ndata: %s\n\n", deltaData)
 				flusher.Flush()
 			}
 
 			if cc.Usage != nil {
-				sseData, _ := json.Marshal(map[string]interface{}{
-					"type": "response.completed",
-					"response": map[string]interface{}{
-						"id":     responseID,
-						"object": "response",
-						"usage": map[string]int{
-							"input_tokens":  cc.Usage.PromptTokens,
-							"output_tokens": cc.Usage.CompletionTokens,
-							"total_tokens":  cc.Usage.PromptTokens + cc.Usage.CompletionTokens,
-						},
-					},
-				})
-				fmt.Fprintf(w, "event: response.completed\ndata: %s\n\n", sseData)
-				flusher.Flush()
+				accumulatedUsage = cc.Usage
 			}
 		}
 	}
+
+	// Send closing events: output_text.done → content_part.done → output_item.done → response.completed
+	if contentPartAdded {
+		itemID := responseID + "_item_0"
+
+		seq++
+		textDoneData, _ := json.Marshal(map[string]interface{}{
+			"type":            "response.output_text.done",
+			"sequence_number": seq,
+			"item_id":         itemID,
+			"output_index":    0,
+			"content_index":   0,
+			"text":            "",
+		})
+		fmt.Fprintf(w, "event: response.output_text.done\ndata: %s\n\n", textDoneData)
+		flusher.Flush()
+
+		seq++
+		partDoneData, _ := json.Marshal(map[string]interface{}{
+			"type":            "response.content_part.done",
+			"sequence_number": seq,
+			"output_index":    0,
+			"content_index":   0,
+			"item_id":         itemID,
+			"part": map[string]interface{}{
+				"type":        "output_text",
+				"text":        "",
+				"annotations": []interface{}{},
+			},
+		})
+		fmt.Fprintf(w, "event: response.content_part.done\ndata: %s\n\n", partDoneData)
+		flusher.Flush()
+
+		seq++
+		seq++
+		itemDoneData, _ := json.Marshal(map[string]interface{}{
+			"type":            "response.output_item.done",
+			"sequence_number": seq,
+			"output_index":    0,
+			"item": map[string]interface{}{
+				"id":      itemID,
+				"type":    "message",
+				"status":  "completed",
+				"role":    "assistant",
+				"content": []interface{}{},
+			},
+		})
+		fmt.Fprintf(w, "event: response.output_item.done\ndata: %s\n\n", itemDoneData)
+		flusher.Flush()
+	}
+
+	// Send response.completed after stream ends
+	seq++
+	completedData := map[string]interface{}{
+		"type":            "response.completed",
+		"sequence_number": seq,
+		"response": map[string]interface{}{
+			"id":     responseID,
+			"object": "response",
+			"status": "completed",
+			"model":  responseModel,
+		},
+	}
+	if accumulatedUsage != nil {
+		completedData["response"].(map[string]interface{})["usage"] = map[string]int{
+			"input_tokens":  accumulatedUsage.PromptTokens,
+			"output_tokens": accumulatedUsage.CompletionTokens,
+			"total_tokens":  accumulatedUsage.PromptTokens + accumulatedUsage.CompletionTokens,
+		}
+	}
+	sseData, _ := json.Marshal(completedData)
+	fmt.Fprintf(w, "event: response.completed\ndata: %s\n\n", sseData)
+	flusher.Flush()
 }

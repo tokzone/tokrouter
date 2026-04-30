@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-04-30
+
+### Changed
+
+- **`assistant auto` now guides model/provider setup**: When no providers are configured, `assistant auto` calls `selectAssistantModel()` to let users pick a model from all presets and auto-add the provider with API key. Same wizard as individual `assistant <name>`.
+
+### Fixed
+
+- **Docker image org references**: Fixed all `ghcr.io/tokflux/*` → `ghcr.io/tokzone/*` in docker-compose.yaml, README, and docs.
+- **Missing `latest` tag**: Added `type=raw,value=latest,enable={{is_default_branch}}` to docker.yml metadata-action.
+- **Release ldflags path**: Fixed `-X tokflux/tokrouter/cli.version` → `-X github.com/tokzone/tokrouter/cli.version` in release.yml.
+
+### Documentation
+
+- **README restructured**: Simplified to 2-step flow (install → `assistant auto` → `start`). README.md (English), README_CN.md (Chinese). `assistant auto` elevated from buried subsection to dedicated section.
+
 ## [0.7.3] - 2026-04-28
 
 ### Changed — DDD Architecture (fluxcore v1.0.0)

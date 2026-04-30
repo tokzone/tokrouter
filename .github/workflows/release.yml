@@ -46,7 +46,7 @@ jobs:
           go mod edit -replace=github.com/tokzone/fluxcore=$(pwd)/../fluxcore
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          go build -ldflags="-s -w -X tokflux/tokrouter/cli.version=${{ github.ref_name }}" -o tokrouter-${{ matrix.goos }}-${{ matrix.goarch }}${ext} ./cmd/tokrouter
+          go build -ldflags="-s -w -X github.com/tokzone/tokrouter/cli.version=${{ github.ref_name }}" -o tokrouter-${{ matrix.goos }}-${{ matrix.goarch }}${ext} ./cmd/tokrouter
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -206,7 +206,7 @@ curl http://localhost:8765/status
 ```json
 {
   "status": "ok",
-  "version": "v0.7.3",
+  "version": "v0.7.4",
   "details": {
     "endpoints": {"total": 2, "healthy": 2},
     "usage": "ok"
@@ -221,7 +221,7 @@ curl http://localhost:8765/status
 ```json
 {
   "status": "degraded",
-  "version": "v0.7.3",
+  "version": "v0.7.4",
   "details": {
     "endpoints": {"total": 2, "healthy": 0},
     "usage": "ok"

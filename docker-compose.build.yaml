@@ -2,7 +2,7 @@
 # 从源码构建 Docker 镜像
 #
 # 使用方法:
-# 1. 克隆代码: git clone https://github.com/tokflux/tokrouter.git
+# 1. 克隆代码: git clone https://github.com/tokzone/tokrouter.git
 # 2. 进入目录: cd tokrouter
 # 3. 配置: cp config.example.yaml config.yaml && vim config.yaml
 # 4. 构建: docker compose -f docker-compose.build.yaml up -d --build

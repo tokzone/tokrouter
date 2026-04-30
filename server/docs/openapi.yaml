@@ -14,7 +14,7 @@ info:
   version: 0.7.0
   contact:
     name: tokrouter
-    url: https://github.com/tokflux/tokrouter
+    url: https://github.com/tokzone/tokrouter
 
 servers:
   - url: http://127.0.0.1:8765

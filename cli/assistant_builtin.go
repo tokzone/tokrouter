@@ -114,6 +114,7 @@ func builtinAssistants() []AssistantConfig {
 				"model_context_window":                "{{CONTEXT}}",
 				"model_providers.tokrouter.name":      "tokrouter",
 				"model_providers.tokrouter.base_url":  "{{URL}}/v1",
+				"model_providers.tokrouter.wire_api":  "responses",
 			},
 			EnvVars: []EnvVarConfig{
 				{Name: "OPENAI_API_KEY", Value: "tokrouter-key"},

@@ -167,6 +167,13 @@ func runAssistantAuto(c *cli.Command) error {
 	}
 
 	model := findDefaultModel(c)
+	if model == "" {
+		var err error
+		model, err = selectAssistantModel(c)
+		if err != nil {
+			pterm.Warning.Printf("Model selection skipped: %v\n", err)
+		}
+	}
 
 	pterm.Println()
 	if model != "" {

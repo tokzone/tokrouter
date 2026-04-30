@@ -1,18 +1,5 @@
 keys:
     - base_urls:
-        openai: https://api.deepseek.com
-      enabled: true
-      format: openai
-      models:
-        - alias: chat
-          name: deepseek-chat
-          priority: 0
-        - alias: r1
-          name: deepseek-reasoner
-          priority: 0
-      name: deepseek-1
-      secret: sk-83594ff687494ddb9684cac00c49a882
-    - base_urls:
         anthropic: https://api.deepseek.com/anthropic
         openai: https://api.deepseek.com
       enabled: true
@@ -30,6 +17,6 @@ keys:
         - alias: r1
           name: deepseek-reasoner
           priority: 0
-      name: deepseek-2
+      name: deepseek-1
       provider: deepseek
       secret: sk-83594ff687494ddb9684cac00c49a882

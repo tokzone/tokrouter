@@ -3,14 +3,14 @@
 # 构建命令: docker build -f Dockerfile.hub -t tokrouter .
 
 # 阶段1: 构建
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
 
 # 安装构建依赖（CGO/SQLite 需要 gcc）
 RUN apk add --no-cache git gcc musl-dev
 
-ENV GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=https://proxy.golang.org,direct
 # 修复 SQLite CGO 在 Alpine/musl 上的编译问题
 ENV CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
 
@@ -44,4 +44,4 @@ EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD wget -q -O- http://localhost:8765/health > /dev/null 2>&1 || exit 1
 
-CMD ["./tokrouter", "serve"]
+CMD ["./tokrouter", "start"]

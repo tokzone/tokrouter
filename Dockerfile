@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
@@ -42,4 +42,4 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD wget -q -O- http://localhost:8765/health > /dev/null 2>&1 || exit 1
 
 # Run tokrouter
-CMD ["./tokrouter", "serve"]
+CMD ["./tokrouter", "start"]

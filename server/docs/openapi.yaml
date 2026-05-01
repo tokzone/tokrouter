@@ -11,7 +11,7 @@ info:
     - Cost tracking and usage statistics
 
     Configure providers in config.yaml and start with `tokrouter serve`.
-  version: 0.7.0
+  version: 0.7.4
   contact:
     name: tokrouter
     url: https://github.com/tokzone/tokrouter
@@ -125,6 +125,81 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /v1/responses:
+    post:
+      summary: Responses API (OpenAI format)
+      description: |
+        Send a request using OpenAI's Responses API format.
+        TokRouter converts to Chat Completions, forwards, and converts the response back.
+      operationId: responses
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResponsesRequest'
+            examples:
+              basic:
+                summary: Basic request
+                value:
+                  model: gpt-4o
+                  input: [{"type": "message", "role": "user", "content": "Hello!"}]
+                  instructions: "Be helpful."
+              streaming:
+                summary: Streaming request
+                value:
+                  model: gpt-4o
+                  input: "Hello!"
+                  stream: true
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponsesResponse'
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream of Responses API events
+        '400':
+          $ref: '#/paths/~1v1~1chat~1completions/post/responses/400'
+        '503':
+          $ref: '#/paths/~1v1~1chat~1completions/post/responses/503'
+
+  /v1/models:
+    get:
+      summary: List models
+      description: Returns all available models with metadata (context window, modalities)
+      operationId: listModels
+      responses:
+        '200':
+          description: Model list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelList'
+
+  /v1/models/{model}:
+    get:
+      summary: Get model by ID
+      operationId: getModel
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Model details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelEntry'
+        '404':
+          description: Model not found
 
   /health:
     get:
@@ -313,6 +388,91 @@ components:
           type: integer
           description: Total tokens
 
+    ResponsesRequest:
+      type: object
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          description: Model name
+          example: gpt-4o
+        input:
+          description: Input content — string, content blocks, or message items
+        instructions:
+          type: string
+          description: System instructions
+        stream:
+          type: boolean
+          default: false
+
+    ResponsesResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: response
+        model:
+          type: string
+        output:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              content:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    text:
+                      type: string
+        usage:
+          $ref: '#/components/schemas/Usage'
+
+    ModelList:
+      type: object
+      properties:
+        object:
+          type: string
+          example: list
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelEntry'
+
+    ModelEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        object:
+          type: string
+          example: model
+        created:
+          type: integer
+          format: int64
+        owned_by:
+          type: string
+        context_window:
+          type: integer
+        max_context_window:
+          type: integer
+        input_modalities:
+          type: array
+          items:
+            type: string
+        supports_reasoning_summaries:
+          type: boolean
+
     Error:
       type: object
       properties:
@@ -324,12 +484,20 @@ components:
           description: Error code
           enum:
             - INVALID_REQUEST
-            - UPSTREAM_FAILED
-            - RATE_LIMITED
-            - INTERNAL_ERROR
+            - AUTH_ERROR
+            - RATE_LIMIT
+            - TIMEOUT
+            - NETWORK_ERROR
+            - DNS_ERROR
+            - NO_ENDPOINT
+            - MODEL_ERROR
+            - SERVER_ERROR
         message:
           type: string
           description: Error message
+        suggestion:
+          type: string
+          description: Recovery hint
 
     HealthResponse:
       type: object
